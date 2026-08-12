@@ -115,6 +115,8 @@ class Generic_WSI_Classification_Dataset(Dataset):
 		mask = data['label'].isin(ignore)
 		data = data[~mask]
 		data.reset_index(drop=True, inplace=True)
+		data['label'] = data['label'].astype(object)
+		
 		for i in data.index:
 			key = data.loc[i, 'label']
 			data.at[i, 'label'] = label_dict[key]
@@ -364,6 +366,3 @@ class Generic_Split(Generic_MIL_Dataset):
 
 	def __len__(self):
 		return len(self.slide_data)
-		
-
-

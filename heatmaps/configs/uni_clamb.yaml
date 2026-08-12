@@ -1,0 +1,53 @@
+--- 
+exp_arguments:
+  n_classes: 2
+  save_exp_code: HER2_HEATMAPS 
+  raw_save_dir: heatmaps/heatmap_raw_results
+  production_save_dir: heatmaps/heatmap_production_results
+  batch_size: 256
+data_arguments: 
+  data_dir: /scratch.hpc/sabrina.tassinari/ProgettoTesi/wsi_organizzate
+  data_dir_key: source
+  process_list: her2_dataset.csv
+  preset: presets/tcga.csv
+  slide_ext: .svs
+  label_dict:
+    normal_tissue: 1
+    tumor_tissue: 0                       
+patching_arguments:
+  patch_size: 256
+  overlap: 0
+  patch_level: 1
+  custom_downsample: 1
+encoder_arguments:
+  model_name: uni_v1 
+  target_img_size: 224 
+model_arguments: 
+  ckpt_path: /scratch.hpc/leonardo.meloni/CLAM/results/HER2_UNI_CLAM_SB_100_s1/s_2_checkpoint.pt
+  model_type: clam_sb 
+  initiate_fn: initiate_model 
+  model_size: small
+  drop_out: 0.25
+  embed_dim: 1024
+heatmap_arguments:
+  vis_level: 1
+  alpha: 0.4
+  blank_canvas: false
+  save_orig: true
+  save_ext: jpg
+  use_ref_scores: true
+  blur: false
+  use_center_shift: true
+  use_roi: false 
+  calc_heatmap: true
+  binarize: false
+  binary_thresh: -1
+  custom_downsample: 1
+  cmap: jet
+sample_arguments:
+  samples:
+    - name: "topk_high_attention"
+      sample: true
+      seed: 42
+      k: 15
+      mode: topk

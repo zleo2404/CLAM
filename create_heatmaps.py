@@ -93,7 +93,7 @@ if __name__ == '__main__':
         else:
             print ('\n'+key + " : " + str(value))
             
-    decision = input('Continue? Y/N ')
+    decision = 'Y'
     if decision in ['Y', 'y', 'Yes', 'yes']:
         pass
     elif decision in ['N', 'n', 'No', 'NO']:
@@ -361,7 +361,7 @@ if __name__ == '__main__':
         save_path = os.path.join(r_slide_save_dir, '{}_{}_roi_{}.h5'.format(slide_id, patch_args.overlap, heatmap_args.use_roi))
 
         if heatmap_args.use_ref_scores:
-            ref_scores = scores
+            ref_scores = scores.flatten()
         else:
             ref_scores = None
         

@@ -1,3 +1,10 @@
 **/.DS_Store
 __pycache__/
 notebooks
+*.txt
+results/
+patching_results*/
+splits/
+features_uni*/
+heatmaps/heatmap_production_results/
+heatmaps/heatmap_raw_results/
