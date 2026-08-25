@@ -50,7 +50,11 @@ def initialize_df(slides, seg_params, filter_params, vis_params, patch_params,
 
 		# patching params
 		'use_padding': np.full((total), bool(patch_params['use_padding']), dtype=bool),
-		'contour_fn': np.full((total), patch_params['contour_fn'])
+		'contour_fn': np.full((total), patch_params['contour_fn']),
+    
+    'patch_level': np.full((total), -1, dtype=np.int8),
+    'patch_size': np.full((total), -1, dtype=np.int32),
+    'step_size': np.full((total), -1, dtype=np.int32)
 		})
 
 	if save_patches:

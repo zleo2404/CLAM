@@ -29,7 +29,7 @@ def segment(WSI_object, seg_params = None, filter_params = None, mask_file = Non
 		WSI_object.segmentTissue(**seg_params, filter_params=filter_params)
 
 	### Stop Seg Timers
-	seg_time_elapsed = time.time() - start_time   
+	seg_time_elapsed = time.time() - start_time
 	return WSI_object, seg_time_elapsed
 
 def patching(WSI_object, **kwargs):
@@ -44,15 +44,13 @@ def patching(WSI_object, **kwargs):
 	patch_time_elapsed = time.time() - start_time
 	return file_path, patch_time_elapsed
 
-
 def seg_and_patch(source, save_dir, patch_save_dir, mask_save_dir, stitch_save_dir, 
-				  patch_size = 256, step_size = 256, 
 				  seg_params = {'seg_level': -1, 'sthresh': 8, 'mthresh': 7, 'close': 4, 'use_otsu': False,
 				  'keep_ids': 'none', 'exclude_ids': 'none'},
 				  filter_params = {'a_t':100, 'a_h': 16, 'max_n_holes':8}, 
 				  vis_params = {'vis_level': -1, 'line_thickness': 500},
 				  patch_params = {'use_padding': True, 'contour_fn': 'four_pt'},
-				  patch_level = 0,
+				  patch_size=256, step_size=256, patch_level=0, target_mag=-1,
 				  use_default_params = False, 
 				  seg = False, save_mask = True, 
 				  stitch= False, 
@@ -160,6 +158,38 @@ def seg_and_patch(source, save_dir, patch_save_dir, mask_save_dir, stitch_save_d
 				best_level = wsi.get_best_level_for_downsample(64)
 				current_seg_params['seg_level'] = best_level
 
+		if target_mag > 0:
+			# Automatic Mode
+			try:
+				base_mag = WSI_object.get_slide_mag() 
+				
+				auto_level, auto_patch_size = WSI_object.get_patching_params_for_target_mag( 
+					base_mag=base_mag, 
+					target_mag=target_mag, 
+					patch_size_target=patch_size
+				)
+				
+				size_ratio = auto_patch_size / patch_size
+				auto_step_size = int(round(step_size * size_ratio))
+				
+				current_patch_params['patch_level'] = auto_level
+				current_patch_params['patch_size'] = auto_patch_size
+				current_patch_params['step_size'] = auto_step_size
+				
+			except ValueError as e:
+				print(f"Skipping {slide_id}: {e}")
+				df.loc[idx, 'status'] = 'failed_metadata'
+				continue
+		else:
+			#Manual Mode
+			current_patch_params['patch_level'] = patch_level
+			current_patch_params['patch_size'] = patch_size
+			current_patch_params['step_size'] = step_size
+		
+		df.loc[idx, 'patch_level'] = current_patch_params['patch_level']
+		df.loc[idx, 'patch_size'] = current_patch_params['patch_size']
+		df.loc[idx, 'step_size'] = current_patch_params['step_size']
+		
 		keep_ids = str(current_seg_params['keep_ids'])
 		if keep_ids != 'none' and len(keep_ids) > 0:
 			str_ids = current_seg_params['keep_ids']
@@ -192,12 +222,11 @@ def seg_and_patch(source, save_dir, patch_save_dir, mask_save_dir, stitch_save_d
 			mask = WSI_object.visWSI(**current_vis_params)
 			mask_path = os.path.join(mask_save_dir, slide_id+'.jpg')
 			mask.save(mask_path)
-
+		
 		patch_time_elapsed = -1 # Default time
 		if patch:
-			current_patch_params.update({'patch_level': patch_level, 'patch_size': patch_size, 'step_size': step_size, 
-										 'save_path': patch_save_dir})
-			file_path, patch_time_elapsed = patching(WSI_object = WSI_object,  **current_patch_params,)
+			current_patch_params.update({'save_path': patch_save_dir})
+			file_path, patch_time_elapsed = patching(WSI_object = WSI_object,  **current_patch_params)
 		
 		stitch_time_elapsed = -1
 		if stitch:
@@ -246,6 +275,8 @@ parser.add_argument('--patch_level', type=int, default=0,
 					help='downsample level at which to patch')
 parser.add_argument('--process_list',  type = str, default=None,
 					help='name of list of images to process with parameters (.csv)')
+parser.add_argument('--target_mag', type=int, default=-1, 
+					help='Set > 0 (es. 20) per calcolare in automatico patch_level, size e step. Se -1 usa parametri manuali.')
 
 if __name__ == '__main__':
 	args = parser.parse_args()
@@ -298,7 +329,7 @@ if __name__ == '__main__':
 	
 	parameters = {'seg_params': seg_params,
 				  'filter_params': filter_params,
-	 			  'patch_params': patch_params,
+				  'patch_params': patch_params,
 				  'vis_params': vis_params}
 
 	print(parameters)
@@ -307,5 +338,6 @@ if __name__ == '__main__':
 											patch_size = args.patch_size, step_size=args.step_size, 
 											seg = args.seg,  use_default_params=False, save_mask = True, 
 											stitch= args.stitch,
+											target_mag=args.target_mag,
 											patch_level=args.patch_level, patch = args.patch,
 											process_list = process_list, auto_skip=args.no_auto_skip)

@@ -8,3 +8,4 @@ splits/
 features_uni*/
 heatmaps/heatmap_production_results/
 heatmaps/heatmap_raw_results/
+wsi_test/

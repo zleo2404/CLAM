@@ -736,6 +736,37 @@ class WholeSlideImage(object):
         print('detected {}/{} of region as tissue'.format(tissue_mask.sum(), tissue_mask.size))
         return tissue_mask
 
+    def get_slide_mag(self):
+        props = self.wsi.properties
+        
+        mag = props.get(openslide.PROPERTY_NAME_OBJECTIVE_POWER, None)
+        if mag is not None:
+            return float(mag)
+        
+        # fallback: scanner without objective-power but mpp
+        mpp_x = props.get(openslide.PROPERTY_NAME_MPP_X, None)
+        if mpp_x is not None:
+            # standard: ~0.25 um/px -> 40x, ~0.5 um/px -> 20x
+            return 10.0 / float(mpp_x)
+        
+        raise ValueError("Error reading metadata of wsi, missing values.")  
+    
+    def get_patching_params_for_target_mag(self, base_mag, target_mag=20, patch_size_target=256, tol=0.02):
+        """
+        Return (patch_level, patch_size_at_level) to normalize patch_size_target and target_mag.
+        """
+        if base_mag < target_mag - tol:
+            raise ValueError(f"Slide at {base_mag}x, below target {target_mag}x: "
+                             f"can't do upsampling.")
+  
+        target_downsample = base_mag / target_mag  # es. 40/20 = 2.0
+  
+        patch_level = self.wsi.get_best_level_for_downsample(target_downsample)
+        level_downsample = self.wsi.level_downsamples[patch_level]
+        
+        patch_size_at_level = int(round(patch_size_target * target_downsample / level_downsample))
+  
+        return patch_level, patch_size_at_level
 
 
 

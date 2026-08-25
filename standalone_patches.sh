@@ -21,11 +21,12 @@ source /scratch.hpc/leonardo.meloni/clam_env/bin/activate
 
 cd /scratch.hpc/leonardo.meloni/CLAM
 
-WSI_DIR="/scratch.hpc/sabrina.tassinari/ProgettoTesi/wsi_organizzate"  
-OUTPUT_DIR="/scratch.hpc/leonardo.meloni/CLAM/patching_results_l1"
+REAL_DIR="/scratch.hpc/sabrina.tassinari/ProgettoTesi/wsi_organizzate"  
+TEST_DIR="/scratch.hpc/leonardo.meloni/CLAM/wsi_test"
+OUTPUT_DIR="/scratch.hpc/leonardo.meloni/CLAM/patching_results_test"
 
 python create_patches_fp.py \
-    --source $WSI_DIR \
+    --source $TEST_DIR \
     --save_dir $OUTPUT_DIR \
     --patch_size 256 \
     --step_size 256 \
@@ -33,7 +34,7 @@ python create_patches_fp.py \
     --patch \
     --stitch \
     --preset tcga.csv \
-    --patch_level 1
+    --target_mag 20
 
 echo "--- Job completato ---"
 echo "Data e ora: $(date)"
