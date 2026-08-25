@@ -113,12 +113,16 @@ if __name__ == '__main__':
 
 		with h5py.File(output_file_path, "r") as file:
 			features = file['features'][:]
+      coords = file['coords'][:]
 			print('features size: ', features.shape)
-			print('coordinates size: ', file['coords'].shape)
+			print('coordinates size: ', coords.shape)
 
 		features = torch.from_numpy(features)
 		bag_base, _ = os.path.splitext(bag_name)
-		torch.save(features, os.path.join(args.feat_dir, 'pt_files', bag_base+'.pt'))
+		torch.save({
+	'features': torch.from_numpy(features),
+	'coords': torch.from_numpy(coords),
+}, os.path.join(args.feat_dir, 'pt_files', bag_base + '.pt'))
 
 
 

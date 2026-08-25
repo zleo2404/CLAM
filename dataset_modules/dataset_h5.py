@@ -47,19 +47,16 @@ class Whole_Slide_Bag(Dataset):
 		return {'img': img, 'coord': coord}
 
 class Whole_Slide_Bag_FP(Dataset):
-	def __init__(self,
-		file_path,
-		wsi,
-		img_transforms=None,
-    stain_normalizer=None)
+	def __init__(self, file_path, wsi, img_transforms=None, stain_normalizer=None):
 		"""
 		Args:
 			file_path (string): Path to the .h5 file containing patched data.
 			img_transforms (callable, optional): Optional transform to be applied on a sample
+			stain_normalizer (callable, optional): Optional Macenko/Reinhard normalizer
 		"""
 		self.wsi = wsi
 		self.roi_transforms = img_transforms
-    self.stain_normalizer = stain_normalizer
+		self.stain_normalizer = stain_normalizer
 		self.file_path = file_path
 
 		with h5py.File(self.file_path, "r") as f:
@@ -67,9 +64,9 @@ class Whole_Slide_Bag_FP(Dataset):
 			self.patch_level = f['coords'].attrs['patch_level']
 			self.patch_size = f['coords'].attrs['patch_size']
 			self.length = len(dset)
-			
+
 		self.summary()
-			
+
 	def __len__(self):
 		return self.length
 
@@ -78,17 +75,16 @@ class Whole_Slide_Bag_FP(Dataset):
 		dset = hdf5_file['coords']
 		for name, value in dset.attrs.items():
 			print(name, value)
-
 		print('\nfeature extraction settings')
 		print('transformations: ', self.roi_transforms)
 
 	def __getitem__(self, idx):
-		with h5py.File(self.file_path,'r') as hdf5_file:
+		with h5py.File(self.file_path, 'r') as hdf5_file:
 			coord = hdf5_file['coords'][idx]
 		img = self.wsi.read_region(coord, self.patch_level, (self.patch_size, self.patch_size)).convert('RGB')
 
-    if self.stain_normalizer is not None:
-			img = self.stain_normalizer(img)    # returns a normalized PIL/np image, falls back silently on failure
+		if self.stain_normalizer is not None:
+			img = self.stain_normalizer(img)  # returns a normalized PIL/np image, falls back silently on failure
 
 		img = self.roi_transforms(img)
 		return {'img': img, 'coord': coord}
