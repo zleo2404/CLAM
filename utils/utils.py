@@ -37,35 +37,46 @@ def collate_MIL(batch):
 	label = torch.LongTensor([item[1] for item in batch])
 	return [img, label]
 
+def collate_MIL_coords(batch):
+	img = torch.cat([item[0] for item in batch], dim=0)
+	label = torch.LongTensor([item[1] for item in batch])
+	coords = [item[2] for item in batch]
+	if isinstance(coords[0], np.ndarray):
+		coords = np.vstack(coords)
+	elif isinstance(coords[0], torch.Tensor):
+		coords = torch.cat(coords, dim=0)
+	return [img, label, coords]
+
 def collate_features(batch):
 	img = torch.cat([item[0] for item in batch], dim = 0)
 	coords = np.vstack([item[1] for item in batch])
 	return [img, coords]
 
 
-def get_simple_loader(dataset, batch_size=1, num_workers=1):
-	kwargs = {'num_workers': 4, 'pin_memory': False, 'num_workers': num_workers} if device.type == "cuda" else {}
-	loader = DataLoader(dataset, batch_size=batch_size, sampler = sampler.SequentialSampler(dataset), collate_fn = collate_MIL, **kwargs)
+def get_simple_loader(dataset, batch_size=1, num_workers=1, return_coords=False):
+	collate = collate_MIL_coords if return_coords else collate_MIL
+	kwargs = {'num_workers': num_workers, 'pin_memory': False} if device.type == "cuda" else {}
+	loader = DataLoader(dataset, batch_size=batch_size, sampler = sampler.SequentialSampler(dataset), collate_fn=collate, **kwargs)
 	return loader 
 
-def get_split_loader(split_dataset, training = False, testing = False, weighted = False):
+def get_split_loader(split_dataset, training=False, testing=False, weighted=False, return_coords=False):
 	"""
 		return either the validation loader or training loader 
 	"""
+	collate = collate_MIL_coords if return_coords else collate_MIL
 	kwargs = {'num_workers': 4} if device.type == "cuda" else {}
 	if not testing:
 		if training:
 			if weighted:
 				weights = make_weights_for_balanced_classes_split(split_dataset)
-				loader = DataLoader(split_dataset, batch_size=1, sampler = WeightedRandomSampler(weights, len(weights)), collate_fn = collate_MIL, **kwargs)	
+				loader = DataLoader(split_dataset, batch_size=1, sampler=WeightedRandomSampler(weights, len(weights)), collate_fn=collate, **kwargs)	
 			else:
-				loader = DataLoader(split_dataset, batch_size=1, sampler = RandomSampler(split_dataset), collate_fn = collate_MIL, **kwargs)
+				loader = DataLoader(split_dataset, batch_size=1, sampler=RandomSampler(split_dataset), collate_fn=collate, **kwargs)
 		else:
-			loader = DataLoader(split_dataset, batch_size=1, sampler = SequentialSampler(split_dataset), collate_fn = collate_MIL, **kwargs)
-	
+			loader = DataLoader(split_dataset, batch_size=1, sampler=SequentialSampler(split_dataset), collate_fn=collate, **kwargs)
 	else:
-		ids = np.random.choice(np.arange(len(split_dataset), int(len(split_dataset)*0.1)), replace = False)
-		loader = DataLoader(split_dataset, batch_size=1, sampler = SubsetSequentialSampler(ids), collate_fn = collate_MIL, **kwargs )
+		ids = np.random.choice(np.arange(len(split_dataset)), int(len(split_dataset)*0.1), replace=False)
+		loader = DataLoader(split_dataset, batch_size=1, sampler=SubsetSequentialSampler(ids), collate_fn=collate, **kwargs )
 
 	return loader
 
