@@ -18,6 +18,7 @@ import numpy as np
 from utils.file_utils import save_hdf5
 from dataset_modules.dataset_h5 import Dataset_All_Bags, Whole_Slide_Bag_FP
 from models import get_encoder
+from utils.color_utils import MacenkoNormalizeWrapper
 
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
@@ -100,10 +101,10 @@ if __name__ == '__main__':
 		output_path = os.path.join(args.feat_dir, 'h5_files', bag_name)
 		time_start = time.time()
 		wsi = openslide.open_slide(slide_file_path)
-		dataset = Whole_Slide_Bag_FP(file_path=h5_file_path, 
-							   		 wsi=wsi, 
+		dataset = Whole_Slide_Bag_FP(file_path=h5_file_path,
+							   		 wsi=wsi,
 									 img_transforms=img_transforms,
-                   stain_normalizer=stain_normalizer)
+									 stain_normalizer=stain_normalizer)
 
 		loader = DataLoader(dataset=dataset, batch_size=args.batch_size, **loader_kwargs)
 		output_file_path = compute_w_loader(output_path, loader = loader, model = model, verbose = 1)
@@ -113,16 +114,15 @@ if __name__ == '__main__':
 
 		with h5py.File(output_file_path, "r") as file:
 			features = file['features'][:]
-      coords = file['coords'][:]
+			coords = file['coords'][:]
 			print('features size: ', features.shape)
 			print('coordinates size: ', coords.shape)
 
-		features = torch.from_numpy(features)
 		bag_base, _ = os.path.splitext(bag_name)
 		torch.save({
-	'features': torch.from_numpy(features),
-	'coords': torch.from_numpy(coords),
-}, os.path.join(args.feat_dir, 'pt_files', bag_base + '.pt'))
+			'features': torch.from_numpy(features),
+			'coords': torch.from_numpy(coords),
+		}, os.path.join(args.feat_dir, 'pt_files', bag_base + '.pt'))
 
 
 
