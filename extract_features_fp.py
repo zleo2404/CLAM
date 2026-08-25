@@ -58,6 +58,8 @@ parser.add_argument('--model_name', type=str, default='resnet50_trunc', choices=
 parser.add_argument('--batch_size', type=int, default=256)
 parser.add_argument('--no_auto_skip', default=False, action='store_true')
 parser.add_argument('--target_patch_size', type=int, default=224)
+parser.add_argument('--stain_norm_target', type=str, default=None,
+                     help='path to a reference H&E patch for Macenko normalization')
 args = parser.parse_args()
 
 
@@ -80,8 +82,9 @@ if __name__ == '__main__':
 	model = model.to(device)
 	total = len(bags_dataset)
 
-	loader_kwargs = {'num_workers': 8, 'pin_memory': True} if device.type == "cuda" else {}
-
+	loader_kwargs = {'num_workers': 4, 'pin_memory': True} if device.type == "cuda" else {}
+	stain_normalizer = MacenkoNormalizeWrapper(args.stain_norm_target) if args.stain_norm_target else None
+  
 	for bag_candidate_idx in tqdm(range(total)):
 		slide_id = bags_dataset[bag_candidate_idx].split(args.slide_ext)[0]
 		bag_name = slide_id+'.h5'
@@ -99,7 +102,8 @@ if __name__ == '__main__':
 		wsi = openslide.open_slide(slide_file_path)
 		dataset = Whole_Slide_Bag_FP(file_path=h5_file_path, 
 							   		 wsi=wsi, 
-									 img_transforms=img_transforms)
+									 img_transforms=img_transforms,
+                   stain_normalizer=stain_normalizer)
 
 		loader = DataLoader(dataset=dataset, batch_size=args.batch_size, **loader_kwargs)
 		output_file_path = compute_w_loader(output_path, loader = loader, model = model, verbose = 1)

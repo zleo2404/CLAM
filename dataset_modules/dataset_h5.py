@@ -3,6 +3,7 @@ import pandas as pd
 
 from torch.utils.data import Dataset
 from torchvision import transforms
+from utils.color_utils import MacenkoNormalizeWrapper
 
 from PIL import Image
 import h5py
@@ -49,7 +50,8 @@ class Whole_Slide_Bag_FP(Dataset):
 	def __init__(self,
 		file_path,
 		wsi,
-		img_transforms=None):
+		img_transforms=None,
+    stain_normalizer=None)
 		"""
 		Args:
 			file_path (string): Path to the .h5 file containing patched data.
@@ -57,7 +59,7 @@ class Whole_Slide_Bag_FP(Dataset):
 		"""
 		self.wsi = wsi
 		self.roi_transforms = img_transforms
-
+    self.stain_normalizer = stain_normalizer
 		self.file_path = file_path
 
 		with h5py.File(self.file_path, "r") as f:
@@ -84,6 +86,9 @@ class Whole_Slide_Bag_FP(Dataset):
 		with h5py.File(self.file_path,'r') as hdf5_file:
 			coord = hdf5_file['coords'][idx]
 		img = self.wsi.read_region(coord, self.patch_level, (self.patch_size, self.patch_size)).convert('RGB')
+
+    if self.stain_normalizer is not None:
+			img = self.stain_normalizer(img)    # returns a normalized PIL/np image, falls back silently on failure
 
 		img = self.roi_transforms(img)
 		return {'img': img, 'coord': coord}
