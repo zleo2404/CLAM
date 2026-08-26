@@ -54,7 +54,8 @@ def initialize_df(slides, seg_params, filter_params, vis_params, patch_params,
     
     'patch_level': np.full((total), -1, dtype=np.int8),
     'patch_size': np.full((total), -1, dtype=np.int32),
-    'step_size': np.full((total), -1, dtype=np.int32)
+    'step_size': np.full((total), -1, dtype=np.int32),
+		'n_patches': np.full((total), -1, dtype=np.int32)
 		})
 
 	if save_patches:

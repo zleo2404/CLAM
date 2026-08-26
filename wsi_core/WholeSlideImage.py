@@ -165,9 +165,22 @@ class WholeSlideImage(object):
         filter_params['a_h'] = filter_params['a_h'] * scaled_ref_patch_area
         
         # Find and filter contours
-        contours, hierarchy = cv2.findContours(img_otsu, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE) # Find contours 
+        contours, hierarchy = cv2.findContours(img_otsu, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE) # Find contours
+
+        if len(contours) == 0 or hierarchy is None:
+            print('{}: no tissue contours found during segmentation, this slide will produce no patches'.format(self.name))
+            self.contours_tissue = []
+            self.holes_tissue = []
+            return
+
         hierarchy = np.squeeze(hierarchy, axis=(0,))[:, 2:]
         if filter_params: foreground_contours, hole_contours = _filter_contours(contours, hierarchy, filter_params)  # Necessary for filtering out artifacts
+
+        if len(foreground_contours) == 0:
+            print('{}: every contour was removed by the area filter, this slide will produce no patches'.format(self.name))
+            self.contours_tissue = []
+            self.holes_tissue = []
+            return
 
         self.contours_tissue = self.scaleContourDim(foreground_contours, scale)
         self.holes_tissue = self.scaleHolesDim(hole_contours, scale)
@@ -395,9 +408,11 @@ class WholeSlideImage(object):
         contour_fn='four_pt', use_padding=True, top_left=None, bot_right=None):
         start_x, start_y, w, h = cv2.boundingRect(cont) if cont is not None else (0, 0, self.level_dim[patch_level][0], self.level_dim[patch_level][1])
 
-        patch_downsample = (int(self.level_downsamples[patch_level][0]), int(self.level_downsamples[patch_level][1]))
+        raw_ds = self.level_downsamples[patch_level]
+        patch_downsample = (round(raw_ds[0]), round(raw_ds[1]))
+        assert abs(raw_ds[0] - patch_downsample[0]) < 0.1, f"non-integer downsample at level {patch_level}: {raw_ds}"
         ref_patch_size = (patch_size*patch_downsample[0], patch_size*patch_downsample[1])
-        
+
         img_w, img_h = self.level_dim[0]
         if use_padding:
             stop_y = start_y+h
@@ -751,21 +766,33 @@ class WholeSlideImage(object):
         
         raise ValueError("Error reading metadata of wsi, missing values.")  
     
-    def get_patching_params_for_target_mag(self, base_mag, target_mag=20, patch_size_target=256, tol=0.02):
+    def get_patching_params_for_target_mag(self, base_mag, target_mag=20, patch_size_target=256, tol=0.05):
         """
         Return (patch_level, patch_size_at_level) to normalize patch_size_target and target_mag.
+
+        tol is a *relative* tolerance, because magnification derived from metadata is
+        never exact.
         """
-        if base_mag < target_mag - tol:
+        if base_mag < target_mag * (1 - tol):
             raise ValueError(f"Slide at {base_mag}x, below target {target_mag}x: "
                              f"can't do upsampling.")
-  
+
         target_downsample = base_mag / target_mag  # es. 40/20 = 2.0
-  
-        patch_level = self.wsi.get_best_level_for_downsample(target_downsample)
-        level_downsample = self.wsi.level_downsamples[patch_level]
-        
-        patch_size_at_level = int(round(patch_size_target * target_downsample / level_downsample))
-  
+
+        patch_level = 0
+        for level, (level_ds, _) in enumerate(self.level_downsamples):
+            if level_ds <= target_downsample * (1 + tol):
+                patch_level = level
+            else:
+                break
+
+        level_downsample = self.level_downsamples[patch_level][0]
+
+        if abs(level_downsample - target_downsample) <= tol * target_downsample:
+            patch_size_at_level = patch_size_target
+        else:
+            patch_size_at_level = int(round(patch_size_target * target_downsample / level_downsample))
+
         return patch_level, patch_size_at_level
 
 
