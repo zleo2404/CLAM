@@ -13,14 +13,14 @@
 #SBATCH --output=log_output_%j.txt
 #SBATCH --error=log_error_%j.txt
 
-echo "--- Inizio job di Estrazione Feature con UNI (Modalità Offline) ---"
+echo "--- Inizio job di Estrazione Feature con UNI (Modalita Offline) ---"
 echo "Data e ora: $(date)"
 
 source /scratch.hpc/leonardo.meloni/clam_env/bin/activate
 
 cd /scratch.hpc/leonardo.meloni/CLAM
 
-python create_splits_seq.py --task task_1_tumor_vs_normal --seed 42 --k 5
+python create_splits_seq.py --task task_1_tumor_vs_normal --seed 42 --k 5 --cv_mode kfold
 
 echo "--- Job completato ---"
 echo "Data e ora: $(date)"

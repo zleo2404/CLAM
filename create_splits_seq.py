@@ -17,6 +17,10 @@ parser.add_argument('--val_frac', type=float, default= 0.1,
                     help='fraction of labels for validation (default: 0.1)')
 parser.add_argument('--test_frac', type=float, default= 0.1,
                     help='fraction of labels for test (default: 0.1)')
+parser.add_argument('--cv_mode', type=str, choices=['montecarlo', 'kfold'], default='montecarlo',
+                    help='montecarlo: val/test resampled from the full pool at every fold (original CLAM '
+                    +'behaviour, folds overlap). kfold: test folds are an exact stratified partition, so '
+                    +'every slide is tested once and only once, and test_frac is ignored (default: montecarlo)')
 
 args = parser.parse_args()
 
@@ -56,8 +60,11 @@ if __name__ == '__main__':
     
     for lf in label_fracs:
         split_dir = 'splits/'+ str(args.task) + '_{}'.format(int(lf * 100))
+        if args.cv_mode == 'kfold':
+            split_dir += '_kfold'
         os.makedirs(split_dir, exist_ok=True)
-        dataset.create_splits(k = args.k, val_num = val_num, test_num = test_num, label_frac=lf)
+        dataset.create_splits(k = args.k, val_num = val_num, test_num = test_num, label_frac=lf,
+                              cv_mode=args.cv_mode, val_frac=args.val_frac)
         for i in range(args.k):
             dataset.set_splits()
             descriptor_df = dataset.test_split_gen(return_descriptor=True)

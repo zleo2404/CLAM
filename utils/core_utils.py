@@ -5,6 +5,8 @@ import os
 from dataset_modules.dataset_generic import save_splits
 from models.model_mil import MIL_fc, MIL_fc_mc
 from models.model_clam import CLAM_MB, CLAM_SB
+from models.model_abmil import ABMIL
+from models.model_transmil import TransMIL
 from sklearn.preprocessing import label_binarize
 from sklearn.metrics import roc_auc_score, roc_curve
 from sklearn.metrics import accuracy_score, balanced_accuracy_score, f1_score, confusion_matrix
@@ -252,10 +254,17 @@ def train(datasets, cur, args):
                   'n_classes': args.n_classes, 
                   "embed_dim": args.embed_dim}
     
-    if args.model_size is not None and args.model_type != 'mil':
+    # transmil has a fixed 512-wide trunk, no size_arg
+    if args.model_size is not None and args.model_type not in ['mil', 'transmil']:
         model_dict.update({"size_arg": args.model_size})
-    
-    if args.model_type in ['clam_sb', 'clam_mb']:
+
+    if args.model_type == 'abmil':
+        model = ABMIL(**model_dict, gate=not args.no_gate)
+
+    elif args.model_type == 'transmil':
+        model = TransMIL(**model_dict)
+
+    elif args.model_type in ['clam_sb', 'clam_mb']:
         if args.subtyping:
             model_dict.update({'subtyping': True})
         

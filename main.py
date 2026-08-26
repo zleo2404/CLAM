@@ -119,8 +119,10 @@ parser.add_argument('--focal_alpha', type=str, default='auto',
                     help="per-class weights for focal bag loss: 'auto' for inverse class "
                     +"frequency of the training split, 'none', or a comma-separated list "
                     +'with one weight per class (default: auto)')
-parser.add_argument('--model_type', type=str, choices=['clam_sb', 'clam_mb', 'mil'], default='clam_sb', 
+parser.add_argument('--model_type', type=str, choices=['clam_sb', 'clam_mb', 'mil', 'abmil', 'transmil'], default='clam_sb',
                     help='type of model (default: clam_sb, clam w/ single attention branch)')
+parser.add_argument('--no_gate', action='store_true', default=False,
+                    help='abmil only: use the plain attention of eq.8 instead of the gated one of eq.9')
 parser.add_argument('--exp_code', type=str, help='experiment code for saving results')
 parser.add_argument('--weighted_sample', action='store_true', default=False, help='enable weighted sampling')
 parser.add_argument('--model_size', type=str, choices=['small', 'big'], default='small', help='size of model, does not affect mil')

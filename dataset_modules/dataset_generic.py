@@ -11,7 +11,7 @@ from scipy import stats
 from torch.utils.data import Dataset
 import h5py
 
-from utils.utils import generate_split, nth
+from utils.utils import generate_split, generate_kfold_split, nth
 
 def save_splits(split_datasets, column_keys, filename, boolean_style=False):
 	splits = [split_datasets[i].slide_data['slide_id'] for i in range(len(split_datasets))]
@@ -149,20 +149,29 @@ class Generic_WSI_Classification_Dataset(Dataset):
 			print('Patient-LVL; Number of samples registered in class %d: %d' % (i, self.patient_cls_ids[i].shape[0]))
 			print('Slide-LVL; Number of samples registered in class %d: %d' % (i, self.slide_cls_ids[i].shape[0]))
 
-	def create_splits(self, k = 3, val_num = (25, 25), test_num = (40, 40), label_frac = 1.0, custom_test_ids = None):
+	def create_splits(self, k = 3, val_num = (25, 25), test_num = (40, 40), label_frac = 1.0, custom_test_ids = None,
+					  cv_mode = 'montecarlo', val_frac = 0.1):
+		if self.patient_strat:
+			cls_ids, samples = self.patient_cls_ids, len(self.patient_data['case_id'])
+		else:
+			cls_ids, samples = self.slide_cls_ids, len(self.slide_data)
+
+		if cv_mode == 'kfold':
+			# test folds partition the data; val_num/test_num are implied by k
+			self.split_gen = generate_kfold_split(cls_ids=cls_ids, samples=samples, n_splits=k,
+												  seed=self.seed, val_frac=val_frac, label_frac=label_frac)
+			return
+
 		settings = {
-					'n_splits' : k, 
-					'val_num' : val_num, 
+					'n_splits' : k,
+					'val_num' : val_num,
 					'test_num': test_num,
 					'label_frac': label_frac,
 					'seed': self.seed,
-					'custom_test_ids': custom_test_ids
+					'custom_test_ids': custom_test_ids,
+					'cls_ids': cls_ids,
+					'samples': samples
 					}
-
-		if self.patient_strat:
-			settings.update({'cls_ids' : self.patient_cls_ids, 'samples': len(self.patient_data['case_id'])})
-		else:
-			settings.update({'cls_ids' : self.slide_cls_ids, 'samples': len(self.slide_data)})
 
 		self.split_gen = generate_split(**settings)
 

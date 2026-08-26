@@ -228,6 +228,41 @@ def generate_split(cls_ids, val_num, test_num, samples, n_splits = 5,
 		yield sampled_train_ids, all_val_ids, all_test_ids
 
 
+def generate_kfold_split(cls_ids, samples, n_splits=5, seed=7, val_frac=0.1, label_frac=1.0):
+	"""
+	Stratified k-fold cross validation.
+	"""
+	rng = np.random.RandomState(seed)
+
+	# partition each class separately, so every fold preserves the class ratio
+	folds = [[] for _ in range(n_splits)]
+	for c in range(len(cls_ids)):
+		idx = np.array(cls_ids[c], dtype=int)
+		rng.shuffle(idx)
+		for f, chunk in enumerate(np.array_split(idx, n_splits)):
+			folds[f].extend(chunk.tolist())
+
+	for i in range(n_splits):
+		test_ids = sorted(folds[i])
+		val_ids = []
+		sampled_train_ids = []
+
+		for c in range(len(cls_ids)):
+			# this class's samples that are not in the test fold
+			cls_rest = np.setdiff1d(np.array(cls_ids[c], dtype=int), test_ids)
+			rng.shuffle(cls_rest)
+
+			n_val = min(max(1, int(round(len(cls_ids[c]) * val_frac))), len(cls_rest))
+			val_ids.extend(cls_rest[:n_val].tolist())
+
+			remaining_ids = cls_rest[n_val:]
+			if label_frac < 1:
+				remaining_ids = remaining_ids[:math.ceil(len(remaining_ids) * label_frac)]
+			sampled_train_ids.extend(remaining_ids.tolist())
+
+		yield sampled_train_ids, val_ids, test_ids
+
+
 def nth(iterator, n, default=None):
 	if n is None:
 		return collections.deque(iterator, maxlen=0)
