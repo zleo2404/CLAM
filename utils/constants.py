@@ -13,6 +13,11 @@ MODEL2CONSTANTS = {
 		"mean": IMAGENET_MEAN,
 		"std": IMAGENET_STD
 	},
+	"uni_v2":
+	{
+		"mean": IMAGENET_MEAN,
+		"std": IMAGENET_STD
+	},
 	"conch_v1":
 	{
 		"mean": OPENAI_MEAN,

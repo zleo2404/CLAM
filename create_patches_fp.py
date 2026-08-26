@@ -8,8 +8,21 @@ import numpy as np
 import time
 import argparse
 import pdb
+import h5py
 import pandas as pd
 from tqdm import tqdm
+
+def count_patches(h5_path):
+	"""
+	Number of patch coordinates stored for a slide.
+
+	Returns 0 when the file is missing: a slide whose contours yield no patch never
+	gets an .h5 written at all, and that is a real count of zero, not an error.
+	"""
+	if not os.path.isfile(h5_path):
+		return 0
+	with h5py.File(h5_path, 'r') as f:
+		return len(f['coords'])
 
 def stitching(file_path, wsi_object, downscale = 64):
 	start = time.time()
@@ -98,6 +111,8 @@ def seg_and_patch(source, save_dir, patch_save_dir, mask_save_dir, stitch_save_d
 		if auto_skip and os.path.isfile(os.path.join(patch_save_dir, slide_id + '.h5')):
 			print('{} already exist in destination location, skipped'.format(slide_id))
 			df.loc[idx, 'status'] = 'already_exist'
+			# count it anyway, so the summary describes what is on disk after a re-run
+			df.loc[idx, 'n_patches'] = count_patches(os.path.join(patch_save_dir, slide_id + '.h5'))
 			continue
 
 		# Inialize WSI
@@ -169,9 +184,12 @@ def seg_and_patch(source, save_dir, patch_save_dir, mask_save_dir, stitch_save_d
 					patch_size_target=patch_size
 				)
 				
-				size_ratio = auto_patch_size / patch_size
-				auto_step_size = int(round(step_size * size_ratio))
-				
+				if step_size == patch_size:
+					auto_step_size = auto_patch_size
+				else:
+					size_ratio = auto_patch_size / patch_size
+					auto_step_size = int(round(step_size * size_ratio))
+
 				current_patch_params['patch_level'] = auto_level
 				current_patch_params['patch_size'] = auto_patch_size
 				current_patch_params['step_size'] = auto_step_size
@@ -227,7 +245,11 @@ def seg_and_patch(source, save_dir, patch_save_dir, mask_save_dir, stitch_save_d
 		if patch:
 			current_patch_params.update({'save_path': patch_save_dir})
 			file_path, patch_time_elapsed = patching(WSI_object = WSI_object,  **current_patch_params)
-		
+			n_patches = count_patches(os.path.join(patch_save_dir, slide_id + '.h5'))
+			df.loc[idx, 'n_patches'] = n_patches
+			if n_patches == 0:
+				print('WARNING: {} produced no patches'.format(slide_id))
+
 		stitch_time_elapsed = -1
 		if stitch:
 			file_path = os.path.join(patch_save_dir, slide_id+'.h5')
@@ -250,10 +272,17 @@ def seg_and_patch(source, save_dir, patch_save_dir, mask_save_dir, stitch_save_d
 	stitch_times /= total
 
 	df.to_csv(os.path.join(save_dir, 'process_list_autogen.csv'), index=False)
+
 	print("average segmentation time in s per slide: {}".format(seg_times))
 	print("average patching time in s per slide: {}".format(patch_times))
 	print("average stiching time in s per slide: {}".format(stitch_times))
-		
+
+	# per-slide patch counts live in the n_patches column of process_list_autogen.csv;
+	# slides not processed in this run keep the -1 placeholder
+	counted = df[df['n_patches'] >= 0]['n_patches']
+	print("patches: {} over {} slides ({} slides produced none)".format(
+		int(counted.sum()), len(counted), int((counted == 0).sum())))
+
 	return seg_times, patch_times
 
 parser = argparse.ArgumentParser(description='seg and patch')
@@ -276,7 +305,7 @@ parser.add_argument('--patch_level', type=int, default=0,
 parser.add_argument('--process_list',  type = str, default=None,
 					help='name of list of images to process with parameters (.csv)')
 parser.add_argument('--target_mag', type=int, default=-1, 
-					help='Set > 0 (es. 20) per calcolare in automatico patch_level, size e step. Se -1 usa parametri manuali.')
+					help='set > 0 (e.g. 20) to derive patch_level, patch_size and step_size automatically from each slide\'s own magnification; -1 uses the manual parameters')
 
 if __name__ == '__main__':
 	args = parser.parse_args()
