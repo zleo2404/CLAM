@@ -80,14 +80,98 @@ def get_split_loader(split_dataset, training=False, testing=False, weighted=Fals
 
 	return loader
 
+class FocalLoss(nn.Module):
+	"""
+	Multi-class focal loss (Lin et al., 2017).
+
+	Scales cross entropy by (1 - p_t) ** gamma, so easy slides contribute less and
+	the hard minority ones dominate the gradient. gamma=0 reduces to plain CE.
+	alpha, if given, is an additional per-class weight (a list or tensor of length
+	n_classes) applied on top.
+	"""
+	def __init__(self, gamma=2.0, alpha=None, reduction='mean'):
+		super().__init__()
+		self.gamma = gamma
+		self.reduction = reduction
+		if alpha is not None and not isinstance(alpha, torch.Tensor):
+			alpha = torch.tensor(alpha, dtype=torch.float)
+		self.register_buffer('alpha', alpha)
+
+	def forward(self, logits, target):
+		target = target.view(-1)
+		log_pt = F.log_softmax(logits, dim=-1).gather(1, target.view(-1, 1)).squeeze(1)
+		pt = log_pt.exp()
+		loss = -((1 - pt) ** self.gamma) * log_pt
+
+		if self.alpha is not None:
+			loss = loss * self.alpha.to(logits.device)[target]
+
+		if self.reduction == 'mean':
+			return loss.mean()
+		elif self.reduction == 'sum':
+			return loss.sum()
+		return loss
+
+def compute_inverse_frequency_alpha(split_dataset, n_classes):
+	"""
+	Per-class focal weights as inverse class frequency, using the sklearn 'balanced'
+	convention: N / (n_classes * count_c). Classes absent from the split get 0.
+
+	Computed on the training split only -- deriving it from val/test would leak.
+	"""
+	counts = np.array([len(split_dataset.slide_cls_ids[c]) for c in range(n_classes)], dtype=float)
+	total = counts.sum()
+	alpha = np.divide(total, n_classes * counts, out=np.zeros(n_classes), where=counts > 0)
+	return alpha.tolist()
+
+def parse_focal_alpha(spec, split_dataset, n_classes):
+	"""
+	Resolve --focal_alpha: 'auto' (inverse class frequency), 'none', or an explicit
+	comma-separated list of one weight per class.
+	"""
+	if spec is None or spec == 'none':
+		return None
+	if spec == 'auto':
+		return compute_inverse_frequency_alpha(split_dataset, n_classes)
+
+	values = [float(v) for v in spec.split(',')]
+	assert len(values) == n_classes, \
+		'--focal_alpha expects {} values for {} classes, got {}'.format(n_classes, n_classes, len(values))
+	return values
+
 def get_optim(model, args):
+	params = filter(lambda p: p.requires_grad, model.parameters())
 	if args.opt == "adam":
-		optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr, weight_decay=args.reg)
+		optimizer = optim.Adam(params, lr=args.lr, weight_decay=args.reg)
+	elif args.opt == "adamw":
+		optimizer = optim.AdamW(params, lr=args.lr, weight_decay=args.reg)
 	elif args.opt == 'sgd':
-		optimizer = optim.SGD(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr, momentum=0.9, weight_decay=args.reg)
+		optimizer = optim.SGD(params, lr=args.lr, momentum=0.9, weight_decay=args.reg)
 	else:
 		raise NotImplementedError
 	return optimizer
+
+def get_scheduler(optimizer, args):
+	"""
+	Optional learning-rate schedule. Returns None when --scheduler is 'none', which
+	keeps the original constant-LR behaviour.
+
+	'plateau' is stepped with the validation loss, the others once per epoch; the
+	training loop handles that difference.
+	"""
+	scheduler_name = getattr(args, 'scheduler', 'none')
+
+	if scheduler_name == 'none':
+		return None
+	elif scheduler_name == 'cosine':
+		return optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.max_epochs, eta_min=args.scheduler_min_lr)
+	elif scheduler_name == 'step':
+		return optim.lr_scheduler.StepLR(optimizer, step_size=args.scheduler_step_size, gamma=args.scheduler_gamma)
+	elif scheduler_name == 'plateau':
+		return optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=args.scheduler_gamma,
+													patience=args.scheduler_patience, min_lr=args.scheduler_min_lr)
+	else:
+		raise NotImplementedError
 
 def print_network(net):
 	num_params = 0

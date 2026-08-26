@@ -7,9 +7,125 @@ from models.model_mil import MIL_fc, MIL_fc_mc
 from models.model_clam import CLAM_MB, CLAM_SB
 from sklearn.preprocessing import label_binarize
 from sklearn.metrics import roc_auc_score, roc_curve
+from sklearn.metrics import accuracy_score, balanced_accuracy_score, f1_score, confusion_matrix
 from sklearn.metrics import auc as calc_auc
 
 device=torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+def compute_metrics(labels, preds, n_classes):
+    """
+    Threshold-dependent metrics computed on hard predictions (Y_hat), to complement
+    the AUC computed on probabilities.
+
+    F1 is macro-averaged rather than binary-on-the-positive-class: this repo's
+    task_1 label_dict is inverted ({'normal_tissue': 1, 'tumor_tissue': 0}), so
+    sklearn's default pos_label=1 would silently score the wrong class. Per-class
+    F1 is returned alongside so nothing is hidden by the averaging.
+    zero_division=0 keeps folds that miss a class from raising.
+    """
+    metrics = {'acc':      accuracy_score(labels, preds),
+               'bal_acc':  balanced_accuracy_score(labels, preds),
+               'f1_macro': f1_score(labels, preds, average='macro', zero_division=0)}
+    metrics['f1_per_class'] = f1_score(labels, preds, average=None,
+                                       labels=list(range(n_classes)), zero_division=0)
+    metrics['confusion_matrix'] = confusion_matrix(labels, preds,
+                                                   labels=list(range(n_classes)))
+    return metrics
+
+def save_loss_curve(train_losses, val_losses, save_path, title='Training / validation loss'):
+    """Save the per-epoch train and validation bag loss as a png."""
+    if len(train_losses) == 0:
+        print('No epochs recorded, skipping loss curve')
+        return
+
+    import matplotlib
+    matplotlib.use('Agg')  # cluster nodes are headless
+    import matplotlib.pyplot as plt
+    from matplotlib.ticker import MaxNLocator
+
+    epochs = np.arange(1, len(train_losses) + 1)
+    fig, ax = plt.subplots(figsize=(7, 5))
+    ax.plot(epochs, train_losses, label='train', marker='o', markersize=3)
+    ax.plot(epochs, val_losses, label='validation', marker='o', markersize=3)
+
+    best = int(np.argmin(val_losses))
+    ax.axvline(epochs[best], color='grey', linestyle='--', linewidth=1)
+    ax.annotate('best val loss {:.4f} @ epoch {}'.format(val_losses[best], epochs[best]),
+                xy=(epochs[best], val_losses[best]), xytext=(4, 8),
+                textcoords='offset points', fontsize=8, color='grey')
+
+    ax.set_xlabel('epoch')
+    ax.set_ylabel('loss')
+    ax.set_title(title)
+    ax.xaxis.set_major_locator(MaxNLocator(integer=True))  # epochs are discrete
+    ax.legend()
+    ax.grid(alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(save_path, dpi=150)
+    plt.close(fig)
+    print('Saved loss curve to {}'.format(save_path))
+
+def save_confusion_matrix(cm, save_path, class_names=None, title='Confusion matrix'):
+    """Save a confusion matrix as a png, annotated with counts and row-normalized rates."""
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    n_classes = cm.shape[0]
+    if class_names is None:
+        class_names = [str(i) for i in range(n_classes)]
+
+    # row-normalize for the colour scale so a dominant class does not flatten the map
+    row_sums = cm.sum(axis=1, keepdims=True)
+    cm_norm = np.divide(cm, row_sums, out=np.zeros(cm.shape, dtype=float), where=row_sums != 0)
+
+    fig, ax = plt.subplots(figsize=(1.8 * n_classes + 2, 1.8 * n_classes + 1.5))
+    im = ax.imshow(cm_norm, cmap='Blues', vmin=0, vmax=1)
+    fig.colorbar(im, ax=ax, label='fraction of true class')
+
+    for i in range(n_classes):
+        for j in range(n_classes):
+            ax.text(j, i, '{}\n({:.1%})'.format(cm[i, j], cm_norm[i, j]),
+                    ha='center', va='center', fontsize=10,
+                    color='white' if cm_norm[i, j] > 0.5 else 'black')
+
+    ax.set_xticks(range(n_classes))
+    ax.set_yticks(range(n_classes))
+    ax.set_xticklabels(class_names)
+    ax.set_yticklabels(class_names)
+    ax.set_xlabel('predicted')
+    ax.set_ylabel('true')
+    ax.set_title(title)
+    fig.tight_layout()
+    fig.savefig(save_path, dpi=150)
+    plt.close(fig)
+    print('Saved confusion matrix to {}'.format(save_path))
+
+def class_names_from_label_dict(label_dict, n_classes):
+    """
+    Class names ordered by class index, e.g. {'normal_tissue': 1, 'tumor_tissue': 0}
+    becomes ['tumor_tissue', 'normal_tissue']. Falls back to the index itself for any
+    class the dict does not name, so a missing label_dict degrades to '0', '1', ...
+    """
+    names = [str(i) for i in range(n_classes)]
+    for name, idx in (label_dict or {}).items():
+        if isinstance(idx, int) and 0 <= idx < n_classes:
+            names[idx] = str(name)
+    return names
+
+def log_metrics(metrics, writer, split, epoch, n_classes):
+    """Print and (optionally) log to tensorboard the metrics from compute_metrics."""
+    print('{} acc: {:.4f}, balanced acc: {:.4f}, macro F1: {:.4f}'.format(
+        split, metrics['acc'], metrics['bal_acc'], metrics['f1_macro']))
+    for i in range(n_classes):
+        print('class {}: F1 {:.4f}'.format(i, metrics['f1_per_class'][i]))
+
+    if writer:
+        writer.add_scalar('{}/acc'.format(split), metrics['acc'], epoch)
+        writer.add_scalar('{}/bal_acc'.format(split), metrics['bal_acc'], epoch)
+        writer.add_scalar('{}/f1_macro'.format(split), metrics['f1_macro'], epoch)
+        for i in range(n_classes):
+            writer.add_scalar('{}/class_{}_f1'.format(split, i), metrics['f1_per_class'][i], epoch)
 
 class Accuracy_Logger(object):
     """Accuracy logger"""
@@ -119,6 +235,14 @@ def train(datasets, cur, args):
         loss_fn = SmoothTop1SVM(n_classes = args.n_classes)
         if device.type == 'cuda':
             loss_fn = loss_fn.cuda()
+    elif args.bag_loss == 'focal':
+        alpha = parse_focal_alpha(args.focal_alpha, train_split, args.n_classes)
+        print('focal loss (gamma={}, alpha={})'.format(args.focal_gamma, alpha), end=' ')
+        if alpha is not None and args.weighted_sample:
+            print('\nWarning: --weighted_sample already rebalances the sampler; '
+                  'combining it with focal alpha weights corrects for imbalance twice. '
+                  'Consider --focal_alpha none.', end=' ')
+        loss_fn = FocalLoss(gamma=args.focal_gamma, alpha=alpha).to(device)
     else:
         loss_fn = nn.CrossEntropyLoss()
     print('Done!')
@@ -165,6 +289,7 @@ def train(datasets, cur, args):
 
     print('\nInit optimizer ...', end=' ')
     optimizer = get_optim(model, args)
+    scheduler = get_scheduler(optimizer, args)
     print('Done!')
     
     print('\nInit Loaders...', end=' ')
@@ -181,18 +306,36 @@ def train(datasets, cur, args):
         early_stopping = None
     print('Done!')
 
+    train_losses = []
+    val_losses = []
+
     for epoch in range(args.max_epochs):
-        if args.model_type in ['clam_sb', 'clam_mb'] and not args.no_inst_cluster:     
-            train_loop_clam(epoch, model, train_loader, optimizer, args.n_classes, args.bag_weight, writer, loss_fn)
-            stop = validate_clam(cur, epoch, model, val_loader, args.n_classes, 
+        if args.model_type in ['clam_sb', 'clam_mb'] and not args.no_inst_cluster:
+            train_loss = train_loop_clam(epoch, model, train_loader, optimizer, args.n_classes, args.bag_weight, writer, loss_fn)
+            stop, val_loss = validate_clam(cur, epoch, model, val_loader, args.n_classes,
                 early_stopping, writer, loss_fn, args.results_dir)
-        
+
         else:
-            train_loop(epoch, model, train_loader, optimizer, args.n_classes, writer, loss_fn)
-            stop = validate(cur, epoch, model, val_loader, args.n_classes, 
+            train_loss = train_loop(epoch, model, train_loader, optimizer, args.n_classes, writer, loss_fn)
+            stop, val_loss = validate(cur, epoch, model, val_loader, args.n_classes,
                 early_stopping, writer, loss_fn, args.results_dir)
-        
-        if stop: 
+
+        train_losses.append(train_loss)
+        val_losses.append(val_loss)
+
+        if scheduler is not None:
+            # plateau reacts to the validation loss, the others advance on epoch count
+            if isinstance(scheduler, optim.lr_scheduler.ReduceLROnPlateau):
+                scheduler.step(val_loss)
+            else:
+                scheduler.step()
+
+            current_lr = optimizer.param_groups[0]['lr']
+            print('lr: {:.2e}'.format(current_lr))
+            if writer:
+                writer.add_scalar('train/lr', current_lr, epoch)
+
+        if stop:
             break
 
     if args.early_stopping:
@@ -200,11 +343,27 @@ def train(datasets, cur, args):
     else:
         torch.save(model.state_dict(), os.path.join(args.results_dir, "s_{}_checkpoint.pt".format(cur)))
 
-    _, val_error, val_auc, _= summary(model, val_loader, args.n_classes)
+    _, val_error, val_auc, _, val_metrics = summary(model, val_loader, args.n_classes)
     print('Val error: {:.4f}, ROC AUC: {:.4f}'.format(val_error, val_auc))
+    log_metrics(val_metrics, writer, 'final/val', 0, args.n_classes)
 
-    results_dict, test_error, test_auc, acc_logger = summary(model, test_loader, args.n_classes)
+    results_dict, test_error, test_auc, acc_logger, test_metrics = summary(model, test_loader, args.n_classes)
     print('Test error: {:.4f}, ROC AUC: {:.4f}'.format(test_error, test_auc))
+    log_metrics(test_metrics, writer, 'final/test', 0, args.n_classes)
+
+    class_names = class_names_from_label_dict(getattr(args, 'label_dict', None), args.n_classes)
+
+    save_loss_curve(train_losses, val_losses,
+                    os.path.join(args.results_dir, 'loss_curve_{}.png'.format(cur)),
+                    title='Bag loss, fold {}'.format(cur))
+    save_confusion_matrix(test_metrics['confusion_matrix'],
+                          os.path.join(args.results_dir, 'confusion_matrix_test_{}.png'.format(cur)),
+                          class_names=class_names,
+                          title='Test confusion matrix, fold {}'.format(cur))
+    save_confusion_matrix(val_metrics['confusion_matrix'],
+                          os.path.join(args.results_dir, 'confusion_matrix_val_{}.png'.format(cur)),
+                          class_names=class_names,
+                          title='Val confusion matrix, fold {}'.format(cur))
 
     for i in range(args.n_classes):
         acc, correct, count = acc_logger.get_summary(i)
@@ -219,7 +378,7 @@ def train(datasets, cur, args):
         writer.add_scalar('final/test_error', test_error, 0)
         writer.add_scalar('final/test_auc', test_auc, 0)
         writer.close()
-    return results_dict, test_auc, val_auc, 1-test_error, 1-val_error 
+    return results_dict, test_auc, val_auc, 1-test_error, 1-val_error, test_metrics, val_metrics
 
 
 def train_loop_clam(epoch, model, loader, optimizer, n_classes, bag_weight, writer = None, loss_fn = None):
@@ -289,6 +448,8 @@ def train_loop_clam(epoch, model, loader, optimizer, n_classes, bag_weight, writ
         writer.add_scalar('train/error', train_error, epoch)
         writer.add_scalar('train/clustering_loss', train_inst_loss, epoch)
 
+    return train_loss
+
 def train_loop(epoch, model, loader, optimizer, n_classes, writer = None, loss_fn = None):   
     model.train()
     acc_logger = Accuracy_Logger(n_classes=n_classes)
@@ -333,7 +494,9 @@ def train_loop(epoch, model, loader, optimizer, n_classes, writer = None, loss_f
         writer.add_scalar('train/loss', train_loss, epoch)
         writer.add_scalar('train/error', train_error, epoch)
 
-   
+    return train_loss
+
+
 def validate(cur, epoch, model, loader, n_classes, early_stopping = None, writer = None, loss_fn = None, results_dir=None):
     model.eval()
     acc_logger = Accuracy_Logger(n_classes=n_classes)
@@ -343,6 +506,7 @@ def validate(cur, epoch, model, loader, n_classes, early_stopping = None, writer
     
     prob = np.zeros((len(loader), n_classes))
     labels = np.zeros(len(loader))
+    preds = np.zeros(len(loader))
 
     with torch.no_grad():
         for batch_idx, (data, label) in enumerate(loader):
@@ -351,12 +515,13 @@ def validate(cur, epoch, model, loader, n_classes, early_stopping = None, writer
             logits, Y_prob, Y_hat, _, _ = model(data)
 
             acc_logger.log(Y_hat, label)
-            
+
             loss = loss_fn(logits, label)
 
             prob[batch_idx] = Y_prob.cpu().numpy()
             labels[batch_idx] = label.item()
-            
+            preds[batch_idx] = Y_hat.item()
+
             val_loss += loss.item()
             error = calculate_error(Y_hat, label)
             val_error += error
@@ -370,27 +535,29 @@ def validate(cur, epoch, model, loader, n_classes, early_stopping = None, writer
     
     else:
         auc = roc_auc_score(labels, prob, multi_class='ovr')
-    
-    
+
+    metrics = compute_metrics(labels, preds, n_classes)
+
     if writer:
         writer.add_scalar('val/loss', val_loss, epoch)
         writer.add_scalar('val/auc', auc, epoch)
         writer.add_scalar('val/error', val_error, epoch)
 
     print('\nVal Set, val_loss: {:.4f}, val_error: {:.4f}, auc: {:.4f}'.format(val_loss, val_error, auc))
+    log_metrics(metrics, writer, 'val', epoch, n_classes)
     for i in range(n_classes):
         acc, correct, count = acc_logger.get_summary(i)
-        print('class {}: acc {}, correct {}/{}'.format(i, acc, correct, count))     
+        print('class {}: acc {}, correct {}/{}'.format(i, acc, correct, count))
 
     if early_stopping:
         assert results_dir
         early_stopping(epoch, val_loss, model, ckpt_name = os.path.join(results_dir, "s_{}_checkpoint.pt".format(cur)))
-        
+
         if early_stopping.early_stop:
             print("Early stopping")
-            return True
+            return True, val_loss
 
-    return False
+    return False, val_loss
 
 def validate_clam(cur, epoch, model, loader, n_classes, early_stopping = None, writer = None, loss_fn = None, results_dir = None):
     model.eval()
@@ -405,6 +572,7 @@ def validate_clam(cur, epoch, model, loader, n_classes, early_stopping = None, w
     
     prob = np.zeros((len(loader), n_classes))
     labels = np.zeros(len(loader))
+    preds = np.zeros(len(loader))
     sample_size = model.k_sample
     with torch.inference_mode():
         for batch_idx, (data, label) in enumerate(loader):
@@ -428,7 +596,8 @@ def validate_clam(cur, epoch, model, loader, n_classes, early_stopping = None, w
 
             prob[batch_idx] = Y_prob.cpu().numpy()
             labels[batch_idx] = label.item()
-            
+            preds[batch_idx] = Y_hat.item()
+
             error = calculate_error(Y_hat, label)
             val_error += error
 
@@ -450,7 +619,10 @@ def validate_clam(cur, epoch, model, loader, n_classes, early_stopping = None, w
 
         auc = np.nanmean(np.array(aucs))
 
+    metrics = compute_metrics(labels, preds, n_classes)
+
     print('\nVal Set, val_loss: {:.4f}, val_error: {:.4f}, auc: {:.4f}'.format(val_loss, val_error, auc))
+    log_metrics(metrics, writer, 'val', epoch, n_classes)
     if inst_count > 0:
         val_inst_loss /= inst_count
         for i in range(2):
@@ -475,12 +647,12 @@ def validate_clam(cur, epoch, model, loader, n_classes, early_stopping = None, w
     if early_stopping:
         assert results_dir
         early_stopping(epoch, val_loss, model, ckpt_name = os.path.join(results_dir, "s_{}_checkpoint.pt".format(cur)))
-        
+
         if early_stopping.early_stop:
             print("Early stopping")
-            return True
+            return True, val_loss
 
-    return False
+    return False, val_loss
 
 def summary(model, loader, n_classes):
     acc_logger = Accuracy_Logger(n_classes=n_classes)
@@ -490,6 +662,7 @@ def summary(model, loader, n_classes):
 
     all_probs = np.zeros((len(loader), n_classes))
     all_labels = np.zeros(len(loader))
+    all_preds = np.zeros(len(loader))
 
     slide_ids = loader.dataset.slide_data['slide_id']
     patient_results = {}
@@ -504,7 +677,8 @@ def summary(model, loader, n_classes):
         probs = Y_prob.cpu().numpy()
         all_probs[batch_idx] = probs
         all_labels[batch_idx] = label.item()
-        
+        all_preds[batch_idx] = Y_hat.item()
+
         patient_results.update({slide_id: {'slide_id': np.array(slide_id), 'prob': probs, 'label': label.item()}})
         error = calculate_error(Y_hat, label)
         test_error += error
@@ -526,5 +700,6 @@ def summary(model, loader, n_classes):
 
         auc = np.nanmean(np.array(aucs))
 
+    metrics = compute_metrics(all_labels, all_preds, n_classes)
 
-    return patient_results, test_error, auc, acc_logger
+    return patient_results, test_error, auc, acc_logger, metrics

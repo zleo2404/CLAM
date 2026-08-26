@@ -39,6 +39,10 @@ def main(args):
     all_val_auc = []
     all_test_acc = []
     all_val_acc = []
+    all_test_f1 = []
+    all_val_f1 = []
+    all_test_bal_acc = []
+    all_val_bal_acc = []
     folds = np.arange(start, end)
     for i in folds:
         seed_torch(args.seed)
@@ -46,17 +50,23 @@ def main(args):
                 csv_path='{}/splits_{}.csv'.format(args.split_dir, i))
         
         datasets = (train_dataset, val_dataset, test_dataset)
-        results, test_auc, val_auc, test_acc, val_acc  = train(datasets, i, args)
+        results, test_auc, val_auc, test_acc, val_acc, test_metrics, val_metrics = train(datasets, i, args)
         all_test_auc.append(test_auc)
         all_val_auc.append(val_auc)
         all_test_acc.append(test_acc)
         all_val_acc.append(val_acc)
+        all_test_f1.append(test_metrics['f1_macro'])
+        all_val_f1.append(val_metrics['f1_macro'])
+        all_test_bal_acc.append(test_metrics['bal_acc'])
+        all_val_bal_acc.append(val_metrics['bal_acc'])
         #write results to pkl
         filename = os.path.join(args.results_dir, 'split_{}_results.pkl'.format(i))
         save_pkl(filename, results)
 
-    final_df = pd.DataFrame({'folds': folds, 'test_auc': all_test_auc, 
-        'val_auc': all_val_auc, 'test_acc': all_test_acc, 'val_acc' : all_val_acc})
+    final_df = pd.DataFrame({'folds': folds, 'test_auc': all_test_auc,
+        'val_auc': all_val_auc, 'test_acc': all_test_acc, 'val_acc' : all_val_acc,
+        'test_f1_macro': all_test_f1, 'val_f1_macro': all_val_f1,
+        'test_bal_acc': all_test_bal_acc, 'val_bal_acc': all_val_bal_acc})
 
     if len(folds) != args.k:
         save_name = 'summary_partial_{}_{}.csv'.format(start, end)
@@ -89,10 +99,26 @@ parser.add_argument('--split_dir', type=str, default=None,
 parser.add_argument('--log_data', action='store_true', default=False, help='log data using tensorboard')
 parser.add_argument('--testing', action='store_true', default=False, help='debugging tool')
 parser.add_argument('--early_stopping', action='store_true', default=False, help='enable early stopping')
-parser.add_argument('--opt', type=str, choices = ['adam', 'sgd'], default='adam')
+parser.add_argument('--opt', type=str, choices = ['adam', 'adamw', 'sgd'], default='adam')
+parser.add_argument('--scheduler', type=str, choices=['none', 'cosine', 'step', 'plateau'], default='none',
+                    help='learning rate schedule (default: none, constant lr)')
+parser.add_argument('--scheduler_step_size', type=int, default=30,
+                    help='epochs between lr drops, step scheduler only (default: 30)')
+parser.add_argument('--scheduler_gamma', type=float, default=0.1,
+                    help='lr multiplier at each drop, for step and plateau (default: 0.1)')
+parser.add_argument('--scheduler_patience', type=int, default=10,
+                    help='epochs without val loss improvement before dropping lr, plateau only (default: 10)')
+parser.add_argument('--scheduler_min_lr', type=float, default=0.,
+                    help='lr floor for cosine and plateau (default: 0)')
 parser.add_argument('--drop_out', type=float, default=0.25, help='dropout')
-parser.add_argument('--bag_loss', type=str, choices=['svm', 'ce'], default='ce',
+parser.add_argument('--bag_loss', type=str, choices=['svm', 'ce', 'focal'], default='ce',
                      help='slide-level classification loss function (default: ce)')
+parser.add_argument('--focal_gamma', type=float, default=2.0,
+                    help='focusing parameter for focal bag loss (default: 2.0, 0 reduces it to ce)')
+parser.add_argument('--focal_alpha', type=str, default='auto',
+                    help="per-class weights for focal bag loss: 'auto' for inverse class "
+                    +"frequency of the training split, 'none', or a comma-separated list "
+                    +'with one weight per class (default: auto)')
 parser.add_argument('--model_type', type=str, choices=['clam_sb', 'clam_mb', 'mil'], default='clam_sb', 
                     help='type of model (default: clam_sb, clam w/ single attention branch)')
 parser.add_argument('--exp_code', type=str, help='experiment code for saving results')
@@ -143,7 +169,12 @@ settings = {'num_splits': args.k,
             'model_size': args.model_size,
             "use_drop_out": args.drop_out,
             'weighted_sample': args.weighted_sample,
-            'opt': args.opt}
+            'opt': args.opt,
+            'scheduler': args.scheduler}
+
+if args.bag_loss == 'focal':
+    settings.update({'focal_gamma': args.focal_gamma,
+                     'focal_alpha': args.focal_alpha})
 
 if args.model_type in ['clam_sb', 'clam_mb']:
    settings.update({'bag_weight': args.bag_weight,
@@ -179,7 +210,10 @@ elif args.task == 'task_2_tumor_subtyping':
         
 else:
     raise NotImplementedError
-    
+
+# carried into train() so plots can label the classes by name instead of 0/1
+args.label_dict = dataset.label_dict
+
 if not os.path.isdir(args.results_dir):
     os.mkdir(args.results_dir)
 

@@ -371,9 +371,10 @@ class Generic_MIL_Dataset(Generic_WSI_Classification_Dataset):
 
 class Generic_Split(Generic_MIL_Dataset):
 	def __init__(self, slide_data, data_dir=None, num_classes=2, return_coords=False):
-		super(Generic_Split, self).__init__(data_dir=data_dir, return_coords=return_coords)
 		self.use_h5 = False
 		self.slide_data = slide_data
+		self.data_dir = data_dir
+		self.return_coords = return_coords
 		self.num_classes = num_classes
 		self.slide_cls_ids = [[] for i in range(self.num_classes)]
 		for i in range(self.num_classes):
