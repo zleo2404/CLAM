@@ -21,20 +21,27 @@ echo "Data e ora: $(date)"
 source /scratch.hpc/leonardo.meloni/clam_env/bin/activate
 
 # Lancia l'addestramento
-# Nota: exp_code darà il nome alla cartella dei risultati
+# La cartella dei risultati e' results/<exp_code>_<model_type>_<model_size>_s<seed>
+# es. results/HER2_20X_clam_sb_small_s1
+FEAT_DIR="features_univ1_20x"
+SPLIT_DIR="task_1_tumor_vs_normal_100_kfold"
+
 CUDA_VISIBLE_DEVICES=0 python main.py \
     --drop_out 0.25 \
     --early_stopping \
     --lr 2e-4 \
     --k 5 \
-    --exp_code HER2_UNI_CLAM_SB_100 \
+    --exp_code HER2_20X \
     --weighted_sample \
     --bag_loss ce \
     --inst_loss svm \
     --task task_1_tumor_vs_normal \
     --model_type clam_sb \
+    --model_size small \
     --log_data \
     --data_root_dir /scratch.hpc/leonardo.meloni/CLAM \
+    --feat_dir $FEAT_DIR \
+    --split_dir $SPLIT_DIR \
     --embed_dim 1024
 
 echo "--- Addestramento completato ---"

@@ -19,6 +19,9 @@ from utils.eval_utils import *
 parser = argparse.ArgumentParser(description='CLAM Evaluation Script')
 parser.add_argument('--data_root_dir', type=str, default=None,
                     help='data directory')
+parser.add_argument('--feat_dir', type=str, default='features_uni_l1_256',
+                    help='feature directory, relative to --data_root_dir; an absolute path '
+                    +'overrides --data_root_dir. Must match the one used for training')
 parser.add_argument('--results_dir', type=str, default='./results',
                     help='relative path to results folder, i.e. '+
                     'the directory containing models_exp_code relative to project root (default: ./results)')
@@ -73,7 +76,7 @@ print(settings)
 if args.task == 'task_1_tumor_vs_normal':
     args.n_classes=2
     dataset = Generic_MIL_Dataset(csv_path = 'dataset_csv/her2_dataset.csv',
-                            data_dir= os.path.join(args.data_root_dir, 'features_uni_l1_256'),
+                            data_dir= os.path.join(args.data_root_dir, args.feat_dir),
                             shuffle = False,
                             print_info = True,
                             label_dict = {'normal_tissue':1, 'tumor_tissue':0},

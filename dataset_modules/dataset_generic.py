@@ -157,7 +157,6 @@ class Generic_WSI_Classification_Dataset(Dataset):
 			cls_ids, samples = self.slide_cls_ids, len(self.slide_data)
 
 		if cv_mode == 'kfold':
-			# test folds partition the data; val_num/test_num are implied by k
 			self.split_gen = generate_kfold_split(cls_ids=cls_ids, samples=samples, n_splits=k,
 												  seed=self.seed, val_frac=val_frac, label_frac=label_frac)
 			return

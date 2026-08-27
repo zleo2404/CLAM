@@ -76,8 +76,11 @@ def main(args):
 
 # Generic training settings
 parser = argparse.ArgumentParser(description='Configurations for WSI Training')
-parser.add_argument('--data_root_dir', type=str, default=None, 
+parser.add_argument('--data_root_dir', type=str, default=None,
                     help='data directory')
+parser.add_argument('--feat_dir', type=str, default='features_uni_l1_256',
+                    help='feature directory, relative to --data_root_dir; an absolute path '
+                    +'overrides --data_root_dir (default: features_uni_l1_256)')
 parser.add_argument('--embed_dim', type=int, default=1024)
 parser.add_argument('--max_epochs', type=int, default=200,
                     help='maximum number of epochs to train (default: 200)')
@@ -169,6 +172,7 @@ settings = {'num_splits': args.k,
             'seed': args.seed,
             'model_type': args.model_type,
             'model_size': args.model_size,
+            'feat_dir': args.feat_dir,
             "use_drop_out": args.drop_out,
             'weighted_sample': args.weighted_sample,
             'opt': args.opt,
@@ -188,7 +192,7 @@ print('\nLoad Dataset')
 if args.task == 'task_1_tumor_vs_normal':
     args.n_classes=2
     dataset = Generic_MIL_Dataset(csv_path = 'dataset_csv/her2_dataset.csv',
-                            data_dir= os.path.join(args.data_root_dir, 'features_uni_l1_256'),
+                            data_dir= os.path.join(args.data_root_dir, args.feat_dir),
                             shuffle = False, 
                             seed = args.seed, 
                             print_info = True,
@@ -219,7 +223,10 @@ args.label_dict = dataset.label_dict
 if not os.path.isdir(args.results_dir):
     os.mkdir(args.results_dir)
 
-args.results_dir = os.path.join(args.results_dir, str(args.exp_code) + '_s{}'.format(args.seed))
+# model_type and model_size go in the folder name so an ablation job array cannot
+# overwrite runs that differ only by architecture
+args.results_dir = os.path.join(args.results_dir, '{}_{}_{}_s{}'.format(
+    args.exp_code, args.model_type, args.model_size, args.seed))
 if not os.path.isdir(args.results_dir):
     os.mkdir(args.results_dir)
 
