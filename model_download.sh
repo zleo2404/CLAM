@@ -25,7 +25,7 @@ export TMPDIR="/scratch.hpc/leonardo.meloni/conda_home"
 export XDG_CACHE_HOME="/scratch.hpc/leonardo.meloni/conda_home"
 
 # Comando di download
-python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='MahmoodLab/UNI2-h', max_workers=1)"
+python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='timm/resnet50.tv_in1k', max_workers=1)"
 
 echo "--- Job completato ---"
 echo "Data e ora: $(date)"

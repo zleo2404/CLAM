@@ -14,7 +14,7 @@
 #SBATCH --error=log_error_%j.txt
 
 
-echo "--- Inizio job di Estrazione Feature con UNI (Modalità Offline) ---"
+echo "--- Inizio job di Estrazione Feature (Modalità Offline) ---"
 echo "Data e ora: $(date)"
 
 source /scratch.hpc/leonardo.meloni/clam_env/bin/activate
@@ -22,15 +22,19 @@ source /scratch.hpc/leonardo.meloni/clam_env/bin/activate
 cd /scratch.hpc/leonardo.meloni/CLAM
 
 WSI_DIR="/scratch.hpc/sabrina.tassinari/ProgettoTesi/wsi_organizzate"
-H5_DIR="/scratch.hpc/leonardo.meloni/CLAM/patching_results_l1"
-FEAT_DIR="/scratch.hpc/leonardo.meloni/CLAM/features_uni_l1_256"
-CSV_FILE="/scratch.hpc/leonardo.meloni/CLAM/patching_results_l1/feature_extraction_list_uni_l1.csv"
+H5_DIR="/scratch.hpc/leonardo.meloni/CLAM/patching_results_20x"
+FEAT_DIR="/scratch.hpc/leonardo.meloni/CLAM/features_resnet_20x"
+CSV_FILE="/scratch.hpc/leonardo.meloni/CLAM/patching_results_20x/process_list_filtered.csv"
 
 export TRANSFORMERS_OFFLINE=1
 export HF_HUB_OFFLINE=1
 export TIMM_OFFLINE=1
+export HF_HOME="/scratch.hpc/leonardo.meloni/conda_home"
+export HUGGINGFACE_HUB_CACHE="/scratch.hpc/leonardo.meloni/conda_home/hub"
 
 export UNI_CKPT_PATH="/scratch.hpc/leonardo.meloni/conda_home/hub/models--MahmoodLab--UNI/snapshots/b55a5ec6cade1a39edfe6534189a9b8ca7a022f0/pytorch_model.bin"
+export UNI2_CKPT_PATH="/scratch.hpc/leonardo.meloni/conda_home/hub/models--MahmoodLab--UNI2-h/snapshots/d517a8dd47902dd7c308b3c36f63bce47e7b9a43/pytorch_model.bin"
+export RESNET_CKPT_PATH="/scratch.hpc/leonardo.meloni/conda_home/hub/models--timm--resnet50.tv_in1k/snapshots/78f3ecfdb38e06d9b8397f662e7ab8fee96026fa/pytorch_model.bin"
 
 CUDA_VISIBLE_DEVICES=0 python extract_features_fp.py \
     --data_h5_dir $H5_DIR \
@@ -39,7 +43,7 @@ CUDA_VISIBLE_DEVICES=0 python extract_features_fp.py \
     --feat_dir $FEAT_DIR \
     --batch_size 128 \
     --slide_ext .svs \
-    --model_name uni_v1
+    --model_name resnet50_trunc
 
 echo "--- Job completato ---"
 echo "Data e ora: $(date)"

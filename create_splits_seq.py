@@ -8,16 +8,16 @@ import numpy as np
 parser = argparse.ArgumentParser(description='Creating splits for whole slide classification')
 parser.add_argument('--label_frac', type=float, default= 1.0,
                     help='fraction of labels (default: 1)')
-parser.add_argument('--seed', type=int, default=1,
+parser.add_argument('--seed', type=int, default=42,
                     help='random seed (default: 1)')
-parser.add_argument('--k', type=int, default=10,
+parser.add_argument('--k', type=int, default=5,
                     help='number of splits (default: 10)')
 parser.add_argument('--task', type=str, choices=['task_1_tumor_vs_normal', 'task_2_tumor_subtyping'])
 parser.add_argument('--val_frac', type=float, default= 0.1,
                     help='fraction of labels for validation (default: 0.1)')
-parser.add_argument('--test_frac', type=float, default= 0.1,
+parser.add_argument('--test_frac', type=float, default= 0.2,
                     help='fraction of labels for test (default: 0.1)')
-parser.add_argument('--cv_mode', type=str, choices=['montecarlo', 'kfold'], default='montecarlo',
+parser.add_argument('--cv_mode', type=str, choices=['montecarlo', 'kfold'], default='kfold',
                     help='montecarlo: val/test resampled from the full pool at every fold (original CLAM '
                     +'behaviour, folds overlap). kfold: test folds are an exact stratified partition, so '
                     +'every slide is tested once and only once, and test_frac is ignored (default: montecarlo)')

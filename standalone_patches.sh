@@ -2,7 +2,7 @@
 #SBATCH --job-name=HER2_FeatureExtraction
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=leonardo.meloni@unibo.it
-#SBATCH --time=16:00:00
+#SBATCH --time=20:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=4
@@ -23,10 +23,10 @@ cd /scratch.hpc/leonardo.meloni/CLAM
 
 REAL_DIR="/scratch.hpc/sabrina.tassinari/ProgettoTesi/wsi_organizzate"  
 TEST_DIR="/scratch.hpc/leonardo.meloni/CLAM/wsi_test"
-OUTPUT_DIR="/scratch.hpc/leonardo.meloni/CLAM/patching_results_test"
+OUTPUT_DIR="/scratch.hpc/leonardo.meloni/CLAM/patching_results_20x"
 
 python create_patches_fp.py \
-    --source $TEST_DIR \
+    --source $REAL_DIR \
     --save_dir $OUTPUT_DIR \
     --patch_size 256 \
     --step_size 256 \
