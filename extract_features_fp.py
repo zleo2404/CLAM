@@ -60,7 +60,9 @@ parser.add_argument('--batch_size', type=int, default=256)
 parser.add_argument('--no_auto_skip', default=False, action='store_true')
 parser.add_argument('--target_patch_size', type=int, default=224)
 parser.add_argument('--stain_norm_target', type=str, default=None,
-                     help='path to a reference H&E patch for Macenko normalization')
+                     help='Macenko stain reference: either an .npz produced by '
+                     +'scripts/fit_stain_reference.py (averaged over many slides, preferred) '
+                     +'or the path to a single reference H&E patch')
 args = parser.parse_args()
 
 
