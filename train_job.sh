@@ -23,7 +23,7 @@ source /scratch.hpc/leonardo.meloni/clam_env/bin/activate
 # Lancia l'addestramento
 # La cartella dei risultati e' results/<exp_code>_<model_type>_<model_size>_s<seed>
 # es. results/HER2_20X_clam_sb_small_s1
-FEAT_DIR="features_resnet_20x"
+FEAT_DIR="features_resnetNorm_20x"
 SPLIT_DIR="task_1_tumor_vs_normal_100_kfold"
 SEED=42
 
@@ -38,7 +38,7 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
     --scheduler_min_lr 1e-6 \
     --opt adamw \
     --k 5 \
-    --exp_code HER2_20X_Resnet \
+    --exp_code HER2_20X_RESNETNORM \
     --weighted_sample \
     --bag_loss ce \
     --inst_loss ce \

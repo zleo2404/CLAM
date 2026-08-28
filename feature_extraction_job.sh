@@ -23,7 +23,7 @@ cd /scratch.hpc/leonardo.meloni/CLAM
 
 WSI_DIR="/scratch.hpc/sabrina.tassinari/ProgettoTesi/wsi_organizzate"
 H5_DIR="/scratch.hpc/leonardo.meloni/CLAM/patching_results_20x"
-FEAT_DIR="/scratch.hpc/leonardo.meloni/CLAM/features_resnet_20x"
+FEAT_DIR="/scratch.hpc/leonardo.meloni/CLAM/features_resnetNorm_20x"
 CSV_FILE="/scratch.hpc/leonardo.meloni/CLAM/patching_results_20x/process_list_filtered.csv"
 
 export TRANSFORMERS_OFFLINE=1
@@ -43,7 +43,8 @@ CUDA_VISIBLE_DEVICES=0 python extract_features_fp.py \
     --feat_dir $FEAT_DIR \
     --batch_size 128 \
     --slide_ext .svs \
-    --model_name resnet50_trunc
+    --model_name resnet50_trunc \
+    --stain_norm_target target_patches/stain_ref_20x.npz
 
 echo "--- Job completato ---"
 echo "Data e ora: $(date)"
