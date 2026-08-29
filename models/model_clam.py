@@ -78,7 +78,12 @@ class CLAM_SB(nn.Module):
     def __init__(self, gate = True, size_arg = "small", dropout = 0., k_sample=8, n_classes=2,
         instance_loss_fn=nn.CrossEntropyLoss(), subtyping=False, embed_dim=1024):
         super().__init__()
-        self.size_dict = {"small": [embed_dim, 512, 256], "big": [embed_dim, 512, 384]}
+        # tiny/supertiny added for the capacity ablation: on ~535 training bags the
+        # 512-wide trunk is far more capacity than one label per slide can constrain
+        self.size_dict = {"small":     [embed_dim, 512, 256],
+                          "big":       [embed_dim, 512, 384],
+                          "tiny":      [embed_dim, 256, 128],
+                          "supertiny": [embed_dim, 128, 64]}
         size = self.size_dict[size_arg]
         fc = [nn.Linear(size[0], size[1]), nn.ReLU(), nn.Dropout(dropout)]
         if gate:
@@ -184,7 +189,10 @@ class CLAM_MB(CLAM_SB):
     def __init__(self, gate = True, size_arg = "small", dropout = 0., k_sample=8, n_classes=2,
         instance_loss_fn=nn.CrossEntropyLoss(), subtyping=False, embed_dim=1024):
         nn.Module.__init__(self)
-        self.size_dict = {"small": [embed_dim, 512, 256], "big": [embed_dim, 512, 384]}
+        self.size_dict = {"small":     [embed_dim, 512, 256],
+                          "big":       [embed_dim, 512, 384],
+                          "tiny":      [embed_dim, 256, 128],
+                          "supertiny": [embed_dim, 128, 64]}
         size = self.size_dict[size_arg]
         fc = [nn.Linear(size[0], size[1]), nn.ReLU(), nn.Dropout(dropout)]
         if gate:

@@ -22,8 +22,13 @@ class ABMIL(nn.Module):
     def __init__(self, gate = True, size_arg = "small", dropout = 0., n_classes = 2, embed_dim = 1024):
         super().__init__()
         # [input dim, embedding dim M, attention hidden dim L]
-        # L=128 is the paper's "mil-attention-128"
-        self.size_dict = {"small": [embed_dim, 512, 128], "big": [embed_dim, 512, 384]}
+        # L=128 is the paper's "mil-attention-128"; 'small' is the paper configuration.
+        # 'tiny' and 'supertiny' narrow M and L: on a few hundred bags with one label each,
+        # a 512-wide trunk has far more capacity than the labels can constrain.
+        self.size_dict = {"small":     [embed_dim, 512, 128],
+                          "big":       [embed_dim, 512, 384],
+                          "tiny":      [embed_dim, 256, 128],
+                          "supertiny": [embed_dim, 128, 64]}
         size = self.size_dict[size_arg]
 
         fc = [nn.Linear(size[0], size[1]), nn.ReLU(), nn.Dropout(dropout),

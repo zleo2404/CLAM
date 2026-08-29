@@ -102,6 +102,20 @@ parser.add_argument('--split_dir', type=str, default=None,
 parser.add_argument('--log_data', action='store_true', default=False, help='log data using tensorboard')
 parser.add_argument('--testing', action='store_true', default=False, help='debugging tool')
 parser.add_argument('--early_stopping', action='store_true', default=False, help='enable early stopping')
+parser.add_argument('--early_stopping_metric', type=str, choices=['loss', 'auc', 'f1_macro'], default='loss',
+                    help='validation metric early stopping monitors and checkpoints on. '
+                    +'On an imbalanced cohort the val loss is dominated by the majority class '
+                    +'and can worsen while auc improves, so auc is the safer choice (default: loss)')
+parser.add_argument('--patience', type=int, default=20,
+                    help='epochs without improvement before early stopping (default: 20)')
+parser.add_argument('--stop_epoch', type=int, default=50,
+                    help='earliest epoch at which early stopping may fire (default: 50)')
+parser.add_argument('--min_delta', type=float, default=0.,
+                    help='improvement below this does not reset the early stopping counter; '
+                    +'prevents noise on a small validation split from keeping training alive (default: 0)')
+parser.add_argument('--patch_drop', type=float, default=0.,
+                    help='fraction of a bag randomly dropped at each training step. The only '
+                    +'augmentation available with precomputed features; 0 disables it (default: 0)')
 parser.add_argument('--opt', type=str, choices = ['adam', 'adamw', 'sgd'], default='adam')
 parser.add_argument('--scheduler', type=str, choices=['none', 'cosine', 'step', 'plateau'], default='none',
                     help='learning rate schedule (default: none, constant lr)')
@@ -113,6 +127,10 @@ parser.add_argument('--scheduler_patience', type=int, default=10,
                     help='epochs without val loss improvement before dropping lr, plateau only (default: 10)')
 parser.add_argument('--scheduler_min_lr', type=float, default=0.,
                     help='lr floor for cosine and plateau (default: 0)')
+parser.add_argument('--warmup_epochs', type=int, default=0,
+                    help='linear lr ramp from lr/warmup_epochs up to lr over the first epochs, '
+                    +'before --scheduler takes over. Stabilises the first steps of attention '
+                    +'models; 0 disables it (default: 0)')
 parser.add_argument('--drop_out', type=float, default=0.25, help='dropout')
 parser.add_argument('--bag_loss', type=str, choices=['svm', 'ce', 'focal'], default='ce',
                      help='slide-level classification loss function (default: ce)')
@@ -128,7 +146,10 @@ parser.add_argument('--no_gate', action='store_true', default=False,
                     help='abmil only: use the plain attention of eq.8 instead of the gated one of eq.9')
 parser.add_argument('--exp_code', type=str, help='experiment code for saving results')
 parser.add_argument('--weighted_sample', action='store_true', default=False, help='enable weighted sampling')
-parser.add_argument('--model_size', type=str, choices=['small', 'big'], default='small', help='size of model, does not affect mil')
+parser.add_argument('--model_size', type=str, choices=['small', 'big', 'tiny', 'supertiny'], default='small',
+                    help="width of the model trunk and attention head; 'small' is each paper's own "
+                    +'configuration, tiny and supertiny reduce capacity for small cohorts. '
+                    +'Does not affect mil (default: small)')
 parser.add_argument('--task', type=str, choices=['task_1_tumor_vs_normal',  'task_2_tumor_subtyping'])
 ### CLAM specific options
 parser.add_argument('--no_inst_cluster', action='store_true', default=False,
@@ -176,7 +197,16 @@ settings = {'num_splits': args.k,
             "use_drop_out": args.drop_out,
             'weighted_sample': args.weighted_sample,
             'opt': args.opt,
-            'scheduler': args.scheduler}
+            'scheduler': args.scheduler,
+            'warmup_epochs': args.warmup_epochs,
+            'drop_out': args.drop_out,
+            'patch_drop': args.patch_drop}
+
+if args.early_stopping:
+    settings.update({'early_stopping_metric': args.early_stopping_metric,
+                     'patience': args.patience,
+                     'stop_epoch': args.stop_epoch,
+                     'min_delta': args.min_delta})
 
 if args.bag_loss == 'focal':
     settings.update({'focal_gamma': args.focal_gamma,

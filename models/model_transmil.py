@@ -13,6 +13,9 @@ Faithful to the reference implementation (github.com/szc19990412/TransMIL):
              -> PPEG (pyramid position encoding)
              -> TransLayer (MSA, deep aggregation)
              -> LayerNorm -> class token -> Linear(512, n_classes)
+
+The 512 above is the paper's width, kept by --model_size small/big; tiny and supertiny
+narrow the whole trunk (see size_dict).
 """
 
 
@@ -63,16 +66,23 @@ class PPEG(nn.Module):
 
 
 class TransMIL(nn.Module):
-    def __init__(self, n_classes = 2, embed_dim = 1024, dropout = 0.):
+    def __init__(self, n_classes = 2, embed_dim = 1024, dropout = 0., size_arg = "small"):
         super(TransMIL, self).__init__()
-        self.pos_layer = PPEG(dim=512)
-        self._fc1 = nn.Sequential(nn.Linear(embed_dim, 512), nn.ReLU())   # adaptation 3
-        self.cls_token = nn.Parameter(torch.randn(1, 1, 512))
+        # adaptation 4: the reference implementation hardcodes a 512-wide trunk in six
+        # places. small/big keep it; tiny and supertiny narrow it for the capacity
+        # ablation. NystromAttention derives dim_head = dim//8 across 8 heads, so dim
+        # must stay a multiple of 8 -- 512, 256 and 128 all do.
+        self.size_dict = {"small": 512, "big": 512, "tiny": 256, "supertiny": 128}
+        dim = self.size_dict[size_arg]
+
+        self.pos_layer = PPEG(dim=dim)
+        self._fc1 = nn.Sequential(nn.Linear(embed_dim, dim), nn.ReLU())   # adaptation 3
+        self.cls_token = nn.Parameter(torch.randn(1, 1, dim))
         self.n_classes = n_classes
-        self.layer1 = TransLayer(dim=512)
-        self.layer2 = TransLayer(dim=512)
-        self.norm = nn.LayerNorm(512)
-        self._fc2 = nn.Linear(512, self.n_classes)
+        self.layer1 = TransLayer(dim=dim)
+        self.layer2 = TransLayer(dim=dim)
+        self.norm = nn.LayerNorm(dim)
+        self._fc2 = nn.Linear(dim, self.n_classes)
 
     def forward(self, h, label=None, instance_eval=False, return_features=False, attention_only=False):
         if h.dim() == 2:            # adaptation 1: [N, D] -> [1, N, D]

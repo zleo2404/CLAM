@@ -158,13 +158,20 @@ def get_scheduler(optimizer, args):
 
 	'plateau' is stepped with the validation loss, the others once per epoch; the
 	training loop handles that difference.
+
+	With --warmup_epochs > 0 the warmup scheduler owns the first epochs and this one is
+	not stepped until the ramp is over, so its schedule must cover only the remainder.
 	"""
 	scheduler_name = getattr(args, 'scheduler', 'none')
+	warmup = getattr(args, 'warmup_epochs', 0)
 
 	if scheduler_name == 'none':
 		return None
 	elif scheduler_name == 'cosine':
-		return optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.max_epochs, eta_min=args.scheduler_min_lr)
+		# span only the post-warmup epochs, so the cosine reaches scheduler_min_lr
+		# exactly at max_epochs instead of being truncated by the warmup
+		return optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max(args.max_epochs - warmup, 1),
+													eta_min=args.scheduler_min_lr)
 	elif scheduler_name == 'step':
 		return optim.lr_scheduler.StepLR(optimizer, step_size=args.scheduler_step_size, gamma=args.scheduler_gamma)
 	elif scheduler_name == 'plateau':
@@ -172,6 +179,16 @@ def get_scheduler(optimizer, args):
 													patience=args.scheduler_patience, min_lr=args.scheduler_min_lr)
 	else:
 		raise NotImplementedError
+
+def get_warmup_scheduler(optimizer, args):
+	"""
+	Linear lr ramp over the first --warmup_epochs epochs, kept as a separate scheduler
+	instead of being chained onto the main one.
+	"""
+	warmup = getattr(args, 'warmup_epochs', 0)
+	if warmup <= 0:
+		return None
+	return optim.lr_scheduler.LinearLR(optimizer, start_factor=1.0 / warmup, total_iters=warmup)
 
 def print_network(net):
 	num_params = 0

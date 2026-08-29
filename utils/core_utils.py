@@ -164,48 +164,86 @@ class Accuracy_Logger(object):
         
         return acc, correct, count
 
+def early_stopping_value(metric_name, val_loss, auc, metrics):
+    """Pick the validation quantity EarlyStopping monitors, from what validate() already computed."""
+    if metric_name == 'loss':
+        return val_loss
+    if metric_name == 'auc':
+        return auc
+    if metric_name == 'f1_macro':
+        return metrics['f1_macro']
+    raise ValueError('unknown early stopping metric: {}'.format(metric_name))
+
 class EarlyStopping:
-    """Early stops the training if validation loss doesn't improve after a given patience."""
-    def __init__(self, patience=20, stop_epoch=50, verbose=False):
+    """
+    Early stops training when the monitored validation metric stops improving, and keeps
+    the checkpoint of its best epoch.
+
+    min_delta guards the opposite failure: without it an improvement of 1e-6 resets the
+    counter, and on a small validation split noise alone keeps training alive indefinitely.
+    """
+    def __init__(self, patience=20, stop_epoch=50, verbose=False, mode='min',
+                 min_delta=0., metric_name='loss'):
         """
         Args:
-            patience (int): How long to wait after last time validation loss improved.
-                            Default: 20
-            stop_epoch (int): Earliest epoch possible for stopping
-            verbose (bool): If True, prints a message for each validation loss improvement. 
-                            Default: False
+            patience (int): epochs without improvement before stopping
+            stop_epoch (int): earliest epoch at which stopping is allowed
+            verbose (bool): print a message on every improvement
+            mode (str): 'min' if lower is better (loss), 'max' otherwise (auc, f1)
+            min_delta (float): improvement below this does not count as an improvement
+            metric_name (str): 'loss', 'auc' or 'f1_macro'; also used for logging
         """
+        assert mode in ('min', 'max'), mode
         self.patience = patience
         self.stop_epoch = stop_epoch
         self.verbose = verbose
+        self.mode = mode
+        self.min_delta = abs(min_delta)
+        self.metric_name = metric_name
         self.counter = 0
         self.best_score = None
         self.early_stop = False
-        self.val_loss_min = np.inf
+        self.best_metric = np.inf if mode == 'min' else -np.inf
 
-    def __call__(self, epoch, val_loss, model, ckpt_name = 'checkpoint.pt'):
+    def __call__(self, epoch, metric, model, ckpt_name = 'checkpoint.pt'):
+        # fold both directions into a single "higher score is better" convention
+        score = -metric if self.mode == 'min' else metric
 
-        score = -val_loss
-
-        if self.best_score is None:
+        if self.best_score is None or score > self.best_score + self.min_delta:
             self.best_score = score
-            self.save_checkpoint(val_loss, model, ckpt_name)
-        elif score < self.best_score:
+            self.save_checkpoint(metric, model, ckpt_name)
+            self.counter = 0
+        else:
             self.counter += 1
-            print(f'EarlyStopping counter: {self.counter} out of {self.patience}')
+            print('EarlyStopping counter: {} out of {} (best val {} {:.6f})'.format(
+                self.counter, self.patience, self.metric_name, self.best_metric))
             if self.counter >= self.patience and epoch > self.stop_epoch:
                 self.early_stop = True
-        else:
-            self.best_score = score
-            self.save_checkpoint(val_loss, model, ckpt_name)
-            self.counter = 0
 
-    def save_checkpoint(self, val_loss, model, ckpt_name):
-        '''Saves model when validation loss decrease.'''
+    def save_checkpoint(self, metric, model, ckpt_name):
+        '''Saves the model whenever the monitored metric improves.'''
         if self.verbose:
-            print(f'Validation loss decreased ({self.val_loss_min:.6f} --> {val_loss:.6f}).  Saving model ...')
+            print('Validation {} improved ({:.6f} --> {:.6f}).  Saving model ...'.format(
+                self.metric_name, self.best_metric, metric))
         torch.save(model.state_dict(), ckpt_name)
-        self.val_loss_min = val_loss
+        self.best_metric = metric
+
+def drop_patches(data, drop_frac, min_keep=1):
+    """
+    Randomly drop a fraction of a bag's instances. Training only.
+
+    The kept indices are sorted rather than left shuffled: attention pooling is
+    permutation-invariant, but TransMIL's PPEG folds the sequence into a 2D grid, so the
+    raster order the coordinates were written in should be preserved.
+    """
+    if drop_frac <= 0:
+        return data
+    n = data.size(0)
+    keep = max(min_keep, int(round(n * (1.0 - drop_frac))))
+    if keep >= n:
+        return data
+    idx = torch.randperm(n, device=data.device)[:keep]
+    return data[idx.sort().values]
 
 def train(datasets, cur, args):
     """   
@@ -254,8 +292,8 @@ def train(datasets, cur, args):
                   'n_classes': args.n_classes, 
                   "embed_dim": args.embed_dim}
     
-    # transmil has a fixed 512-wide trunk, no size_arg
-    if args.model_size is not None and args.model_type not in ['mil', 'transmil']:
+    # mil ignores size_arg (upstream behaviour); every other model type honours it
+    if args.model_size is not None and args.model_type != 'mil':
         model_dict.update({"size_arg": args.model_size})
 
     if args.model_type == 'abmil':
@@ -299,6 +337,12 @@ def train(datasets, cur, args):
     print('\nInit optimizer ...', end=' ')
     optimizer = get_optim(model, args)
     scheduler = get_scheduler(optimizer, args)
+    # built after the main scheduler on purpose: LinearLR lowers the lr on construction,
+    # and that lowered value is what epoch 0 must train with
+    warmup_scheduler = get_warmup_scheduler(optimizer, args)
+    if warmup_scheduler is not None:
+        print('warmup: linear ramp over {} epochs, starting at lr {:.2e}'.format(
+            args.warmup_epochs, optimizer.param_groups[0]['lr']), end=' ')
     print('Done!')
     
     print('\nInit Loaders...', end=' ')
@@ -309,36 +353,55 @@ def train(datasets, cur, args):
 
     print('\nSetup EarlyStopping...', end=' ')
     if args.early_stopping:
-        early_stopping = EarlyStopping(patience = 20, stop_epoch=50, verbose = True)
-
+        es_metric = getattr(args, 'early_stopping_metric', 'loss')
+        early_stopping = EarlyStopping(patience=getattr(args, 'patience', 20),
+                                       stop_epoch=getattr(args, 'stop_epoch', 50),
+                                       verbose=True,
+                                       mode='min' if es_metric == 'loss' else 'max',
+                                       min_delta=getattr(args, 'min_delta', 0.),
+                                       metric_name=es_metric)
+        print('monitoring val {} (mode {}), patience {}, stop_epoch {}, min_delta {}'.format(
+            es_metric, early_stopping.mode, early_stopping.patience,
+            early_stopping.stop_epoch, early_stopping.min_delta), end=' ')
+        if args.scheduler == 'plateau' and args.scheduler_patience >= early_stopping.patience:
+            print('\nWarning: --scheduler_patience ({}) >= --patience ({}), so training will '
+                  'stop before the plateau scheduler ever drops the lr.'.format(
+                      args.scheduler_patience, early_stopping.patience), end=' ')
     else:
         early_stopping = None
     print('Done!')
 
     train_losses = []
     val_losses = []
+    warmup_epochs = getattr(args, 'warmup_epochs', 0)
+    patch_drop = getattr(args, 'patch_drop', 0.)
 
     for epoch in range(args.max_epochs):
         if args.model_type in ['clam_sb', 'clam_mb'] and not args.no_inst_cluster:
-            train_loss = train_loop_clam(epoch, model, train_loader, optimizer, args.n_classes, args.bag_weight, writer, loss_fn)
+            train_loss = train_loop_clam(epoch, model, train_loader, optimizer, args.n_classes, args.bag_weight, writer, loss_fn, patch_drop)
             stop, val_loss = validate_clam(cur, epoch, model, val_loader, args.n_classes,
                 early_stopping, writer, loss_fn, args.results_dir)
 
         else:
-            train_loss = train_loop(epoch, model, train_loader, optimizer, args.n_classes, writer, loss_fn)
+            train_loss = train_loop(epoch, model, train_loader, optimizer, args.n_classes, writer, loss_fn, patch_drop)
             stop, val_loss = validate(cur, epoch, model, val_loader, args.n_classes,
                 early_stopping, writer, loss_fn, args.results_dir)
 
         train_losses.append(train_loss)
         val_losses.append(val_loss)
 
-        if scheduler is not None:
+        # during the ramp only the warmup scheduler advances; the main one is held so its
+        # own schedule (and, for plateau, its patience counter) starts from the full lr
+        if epoch < warmup_epochs:
+            warmup_scheduler.step()
+        elif scheduler is not None:
             # plateau reacts to the validation loss, the others advance on epoch count
             if isinstance(scheduler, optim.lr_scheduler.ReduceLROnPlateau):
                 scheduler.step(val_loss)
             else:
                 scheduler.step()
 
+        if scheduler is not None or warmup_epochs > 0:
             current_lr = optimizer.param_groups[0]['lr']
             print('lr: {:.2e}'.format(current_lr))
             if writer:
@@ -390,11 +453,11 @@ def train(datasets, cur, args):
     return results_dict, test_auc, val_auc, 1-test_error, 1-val_error, test_metrics, val_metrics
 
 
-def train_loop_clam(epoch, model, loader, optimizer, n_classes, bag_weight, writer = None, loss_fn = None):
+def train_loop_clam(epoch, model, loader, optimizer, n_classes, bag_weight, writer = None, loss_fn = None, patch_drop = 0.):
     model.train()
     acc_logger = Accuracy_Logger(n_classes=n_classes)
     inst_logger = Accuracy_Logger(n_classes=n_classes)
-    
+
     train_loss = 0.
     train_error = 0.
     train_inst_loss = 0.
@@ -403,6 +466,9 @@ def train_loop_clam(epoch, model, loader, optimizer, n_classes, bag_weight, writ
     print('\n')
     for batch_idx, (data, label) in enumerate(loader):
         data, label = data.to(device), label.to(device)
+        # clam's instance branch takes the k_sample highest and k_sample lowest attended
+        # instances, so the bag must never be shrunk below 2*k_sample or topk raises
+        data = drop_patches(data, patch_drop, min_keep=2 * model.k_sample)
         logits, Y_prob, Y_hat, _, instance_dict = model(data, label=label, instance_eval=True)
 
         acc_logger.log(Y_hat, label)
@@ -459,7 +525,7 @@ def train_loop_clam(epoch, model, loader, optimizer, n_classes, bag_weight, writ
 
     return train_loss
 
-def train_loop(epoch, model, loader, optimizer, n_classes, writer = None, loss_fn = None):   
+def train_loop(epoch, model, loader, optimizer, n_classes, writer = None, loss_fn = None, patch_drop = 0.):
     model.train()
     acc_logger = Accuracy_Logger(n_classes=n_classes)
     train_loss = 0.
@@ -468,6 +534,7 @@ def train_loop(epoch, model, loader, optimizer, n_classes, writer = None, loss_f
     print('\n')
     for batch_idx, (data, label) in enumerate(loader):
         data, label = data.to(device), label.to(device)
+        data = drop_patches(data, patch_drop)
 
         logits, Y_prob, Y_hat, _, _ = model(data)
         
@@ -560,7 +627,8 @@ def validate(cur, epoch, model, loader, n_classes, early_stopping = None, writer
 
     if early_stopping:
         assert results_dir
-        early_stopping(epoch, val_loss, model, ckpt_name = os.path.join(results_dir, "s_{}_checkpoint.pt".format(cur)))
+        monitored = early_stopping_value(early_stopping.metric_name, val_loss, auc, metrics)
+        early_stopping(epoch, monitored, model, ckpt_name = os.path.join(results_dir, "s_{}_checkpoint.pt".format(cur)))
 
         if early_stopping.early_stop:
             print("Early stopping")
@@ -655,7 +723,8 @@ def validate_clam(cur, epoch, model, loader, n_classes, early_stopping = None, w
 
     if early_stopping:
         assert results_dir
-        early_stopping(epoch, val_loss, model, ckpt_name = os.path.join(results_dir, "s_{}_checkpoint.pt".format(cur)))
+        monitored = early_stopping_value(early_stopping.metric_name, val_loss, auc, metrics)
+        early_stopping(epoch, monitored, model, ckpt_name = os.path.join(results_dir, "s_{}_checkpoint.pt".format(cur)))
 
         if early_stopping.early_stop:
             print("Early stopping")
