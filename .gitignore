@@ -4,6 +4,7 @@ notebooks
 log*.txt
 *.png
 *.pt
+results*/
 patching_results*/
 splits/
 heatmaps/*

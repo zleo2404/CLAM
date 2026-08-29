@@ -38,7 +38,7 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
     --scheduler_min_lr 1e-6 \
     --opt adamw \
     --k 5 \
-    --exp_code HER2_20X_RESNETNORM \
+    --exp_code HER2_20X_ResNetNormT \
     --weighted_sample \
     --bag_loss ce \
     --inst_loss ce \

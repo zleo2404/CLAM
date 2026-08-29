@@ -38,7 +38,7 @@ def filter_gdc_data(clinical_file, manifest_file, output_file):
     print(f"Found {len(valid_patients)} patients meeting IHC/FISH clinical criteria.")
 
     saved_count = 0
-    #seen_patients = set()
+    seen_patients = set()
 
     with open(manifest_file, 'r', encoding='utf-8') as f_in, \
          open(output_file, 'w', encoding='utf-8') as f_out:
@@ -62,9 +62,9 @@ def filter_gdc_data(clinical_file, manifest_file, output_file):
                     if sample_code.startswith('11') or sample_code.startswith('06'):
                         continue
 #and barcode not in seen_patients
-                    if barcode in valid_patients:
+                    if barcode in valid_patients and barcode not in seen_patients:
                         f_out.write(line)
-                        #seen_patients.add(barcode)
+                        seen_patients.add(barcode)
                         saved_count += 1
 
     print(f"Filtering complete. Saved {saved_count} unique .svs files to the output manifest.")
