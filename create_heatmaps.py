@@ -13,6 +13,7 @@ from utils.utils import *
 from math import floor
 from utils.eval_utils import initiate_model as initiate_model
 from models.model_clam import CLAM_MB, CLAM_SB
+from models.model_abmil import ABMIL
 from models import get_encoder
 from types import SimpleNamespace
 from collections import namedtuple
@@ -35,8 +36,11 @@ device=torch.device("cuda" if torch.cuda.is_available() else "cpu")
 def infer_single_slide(model, features, label, reverse_label_dict, k=1):
     features = features.to(device)
     with torch.inference_mode():
-        if isinstance(model, (CLAM_SB, CLAM_MB)):
-            model_results_dict = model(features)
+        # ABMIL returns A_raw shaped 1 x N, exactly like CLAM_SB, so the same handling
+        # applies. TransMIL cannot be supported: it has no single attention vector over
+        # instances -- its attention lives inside the Nystrom blocks and mixes instances
+        # across layers, so there is nothing to map back onto patch coordinates.
+        if isinstance(model, (CLAM_SB, CLAM_MB, ABMIL)):
             logits, Y_prob, Y_hat, A, _ = model(features)
             Y_hat = Y_hat.item()
 
@@ -46,7 +50,9 @@ def infer_single_slide(model, features, label, reverse_label_dict, k=1):
             A = A.view(-1, 1).cpu().numpy()
 
         else:
-            raise NotImplementedError
+            raise NotImplementedError(
+                'attention heatmaps support CLAM_SB, CLAM_MB and ABMIL; got {}'.format(
+                    type(model).__name__))
 
         print('Y_hat: {}, Y: {}, Y_prob: {}'.format(reverse_label_dict[Y_hat], label, ["{:.4f}".format(p) for p in Y_prob.cpu().flatten()]))	
         
@@ -181,7 +187,9 @@ if __name__ == '__main__':
 
     os.makedirs(exp_args.production_save_dir, exist_ok=True)
     os.makedirs(exp_args.raw_save_dir, exist_ok=True)
-    blocky_wsi_kwargs = {'top_left': None, 'bot_right': None, 'patch_size': patch_size, 'step_size': patch_size, 
+    # defaults from the yaml; rebuilt per slide inside the loop, where target_mag can
+    # override the level and patch size
+    blocky_wsi_kwargs = {'top_left': None, 'bot_right': None, 'patch_size': patch_size, 'step_size': patch_size,
     'custom_downsample':patch_args.custom_downsample, 'level': patch_args.patch_level, 'use_center_shift': heatmap_args.use_center_shift}
 
     for i in tqdm(range(len(process_stack))):
@@ -264,7 +272,32 @@ if __name__ == '__main__':
         wsi_object = initialize_wsi(slide_path, seg_mask_path=mask_file, seg_params=seg_params, filter_params=filter_params)
         print('Done!')
 
-        wsi_ref_downsample = wsi_object.level_downsamples[patch_args.patch_level]
+        # Resolve the patching resolution per slide, the same way create_patches_fp.py does
+        # with --target_mag. Without this the heatmap re-patches every slide at the fixed
+        # patch_level from the yaml, so on a cohort scanned at mixed magnifications part of
+        # the slides would be encoded at a different resolution than the features the model
+        # was trained on. target_mag <= 0 keeps the fixed patch_level, the upstream behaviour.
+        slide_patch_level = patch_args.patch_level
+        slide_patch_size = patch_args.patch_size
+        target_mag = getattr(patch_args, 'target_mag', -1)
+        if target_mag is not None and target_mag > 0:
+            try:
+                base_mag = wsi_object.get_slide_mag()
+                slide_patch_level, slide_patch_size = wsi_object.get_patching_params_for_target_mag(
+                    base_mag, target_mag=target_mag, patch_size_target=patch_args.patch_size)
+                print('{}: native {:.1f}x -> level {}, patch {} px for {}x'.format(
+                    slide_id, base_mag, slide_patch_level, slide_patch_size, target_mag))
+            except ValueError as e:
+                print('{}: cannot resolve target magnification ({}), slide skipped'.format(slide_id, e))
+                continue
+
+        patch_size = (slide_patch_size, slide_patch_size)
+        step_size = tuple((np.array(patch_size) * (1 - patch_args.overlap)).astype(int))
+        blocky_wsi_kwargs = {'top_left': None, 'bot_right': None, 'patch_size': patch_size,
+                             'step_size': patch_size, 'custom_downsample': patch_args.custom_downsample,
+                             'level': slide_patch_level, 'use_center_shift': heatmap_args.use_center_shift}
+
+        wsi_ref_downsample = wsi_object.level_downsamples[slide_patch_level]
 
         # the actual patch size for heatmap visualization should be the patch size * downsample factor * custom downsample factor
         vis_patch_size = tuple((np.array(patch_size) * np.array(wsi_ref_downsample) * patch_args.custom_downsample).astype(int))
@@ -342,11 +375,11 @@ if __name__ == '__main__':
                     score_start=sample.get('score_start', 0), score_end=sample.get('score_end', 1))
                 for idx, (s_coord, s_score) in enumerate(zip(sample_results['sampled_coords'], sample_results['sampled_scores'])):
                     print('coord: {} score: {:.3f}'.format(s_coord, s_score))
-                    patch = wsi_object.wsi.read_region(tuple(s_coord), patch_args.patch_level, (patch_args.patch_size, patch_args.patch_size)).convert('RGB')
+                    patch = wsi_object.wsi.read_region(tuple(s_coord), slide_patch_level, (slide_patch_size, slide_patch_size)).convert('RGB')
                     patch.save(os.path.join(sample_save_dir, '{}_{}_x_{}_y_{}_a_{:.3f}.png'.format(idx, slide_id, s_coord[0], s_coord[1], s_score)))
 
-        wsi_kwargs = {'top_left': top_left, 'bot_right': bot_right, 'patch_size': patch_size, 'step_size': step_size, 
-        'custom_downsample':patch_args.custom_downsample, 'level': patch_args.patch_level, 'use_center_shift': heatmap_args.use_center_shift}
+        wsi_kwargs = {'top_left': top_left, 'bot_right': bot_right, 'patch_size': patch_size, 'step_size': step_size,
+        'custom_downsample':patch_args.custom_downsample, 'level': slide_patch_level, 'use_center_shift': heatmap_args.use_center_shift}
 
         heatmap_save_name = '{}_blockmap.tiff'.format(slide_id)
         if os.path.isfile(os.path.join(r_slide_save_dir, heatmap_save_name)):

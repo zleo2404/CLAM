@@ -19,13 +19,20 @@ patching_arguments:
   overlap: 0
   patch_level: 1
   custom_downsample: 1
+  # resolve patch_level and patch_size per slide from its own magnification, so heatmap
+  # patches match the resolution the features were extracted at. Must equal the
+  # --target_mag used in create_patches_fp.py. -1 keeps the fixed patch_level above.
+  target_mag: 20
 encoder_arguments:
   model_name: uni_v1 
   target_img_size: 224 
-model_arguments: 
-  ckpt_path: /scratch.hpc/leonardo.meloni/CLAM/results/HER2_UNI_CLAM_SB_100_s1/s_2_checkpoint.pt
-  model_type: clam_sb 
-  initiate_fn: initiate_model 
+model_arguments:
+  # results dirs are now named <exp_code>_<model_type>_<model_size>_s<seed>; set this to
+  # the fold you actually want to visualise. model_type / model_size / embed_dim must
+  # match that checkpoint, or load_state_dict will fail.
+  ckpt_path: /scratch.hpc/leonardo.meloni/CLAM/results/HER2_20X_UNI_clam_sb_small_s42/s_0_checkpoint.pt
+  model_type: clam_sb
+  initiate_fn: initiate_model
   model_size: small
   drop_out: 0.25
   embed_dim: 1024
