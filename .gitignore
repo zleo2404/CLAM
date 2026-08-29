@@ -5,6 +5,7 @@ log*.txt
 *.png
 *.pt
 results*/
+ablation/logs/
 patching_results*/
 splits/
 heatmaps/*
