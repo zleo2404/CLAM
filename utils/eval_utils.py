@@ -20,7 +20,9 @@ def initiate_model(args, ckpt_path, device='cuda'):
     print('Init Model')    
     model_dict = {"dropout": args.drop_out, 'n_classes': args.n_classes, "embed_dim": args.embed_dim}
     
-    if args.model_size is not None and args.model_type in ['clam_sb', 'clam_mb', 'abmil']:
+    # must mirror core_utils.train(), or a checkpoint trained at one width is rebuilt at
+    # another and load_state_dict fails
+    if args.model_size is not None and args.model_type != 'mil':
         model_dict.update({"size_arg": args.model_size})
 
     if args.model_type =='clam_sb':
