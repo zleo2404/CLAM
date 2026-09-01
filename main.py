@@ -43,6 +43,9 @@ def main(args):
     all_val_f1 = []
     all_test_bal_acc = []
     all_val_bal_acc = []
+    all_test_auprc = []
+    all_val_auprc = []
+    all_thresholds = []
     folds = np.arange(start, end)
     for i in folds:
         seed_torch(args.seed)
@@ -59,6 +62,9 @@ def main(args):
         all_val_f1.append(val_metrics['f1_macro'])
         all_test_bal_acc.append(test_metrics['bal_acc'])
         all_val_bal_acc.append(val_metrics['bal_acc'])
+        all_test_auprc.append(test_metrics['auprc'])
+        all_val_auprc.append(val_metrics['auprc'])
+        all_thresholds.append(test_metrics.get('threshold', 0.5))
         #write results to pkl
         filename = os.path.join(args.results_dir, 'split_{}_results.pkl'.format(i))
         save_pkl(filename, results)
@@ -66,7 +72,9 @@ def main(args):
     final_df = pd.DataFrame({'folds': folds, 'test_auc': all_test_auc,
         'val_auc': all_val_auc, 'test_acc': all_test_acc, 'val_acc' : all_val_acc,
         'test_f1_macro': all_test_f1, 'val_f1_macro': all_val_f1,
-        'test_bal_acc': all_test_bal_acc, 'val_bal_acc': all_val_bal_acc})
+        'test_bal_acc': all_test_bal_acc, 'val_bal_acc': all_val_bal_acc,
+        'test_auprc': all_test_auprc, 'val_auprc': all_val_auprc,
+        'threshold': all_thresholds})
 
     if len(folds) != args.k:
         save_name = 'summary_partial_{}_{}.csv'.format(start, end)
@@ -102,10 +110,12 @@ parser.add_argument('--split_dir', type=str, default=None,
 parser.add_argument('--log_data', action='store_true', default=False, help='log data using tensorboard')
 parser.add_argument('--testing', action='store_true', default=False, help='debugging tool')
 parser.add_argument('--early_stopping', action='store_true', default=False, help='enable early stopping')
-parser.add_argument('--early_stopping_metric', type=str, choices=['loss', 'auc', 'f1_macro'], default='loss',
+parser.add_argument('--early_stopping_metric', type=str, choices=['loss', 'auc', 'auprc', 'f1_macro'], default='loss',
                     help='validation metric early stopping monitors and checkpoints on. '
                     +'On an imbalanced cohort the val loss is dominated by the majority class '
-                    +'and can worsen while auc improves, so auc is the safer choice (default: loss)')
+                    +'and can worsen while auc improves. auprc is average precision for the '
+                    +'minority class, the most sensitive to it but also the noisiest on a small '
+                    +'validation split (default: loss)')
 parser.add_argument('--patience', type=int, default=20,
                     help='epochs without improvement before early stopping (default: 20)')
 parser.add_argument('--stop_epoch', type=int, default=50,
@@ -113,6 +123,16 @@ parser.add_argument('--stop_epoch', type=int, default=50,
 parser.add_argument('--min_delta', type=float, default=0.,
                     help='improvement below this does not reset the early stopping counter; '
                     +'prevents noise on a small validation split from keeping training alive (default: 0)')
+parser.add_argument('--threshold_metric', type=str, default='argmax',
+                    choices=['argmax', 'f1_macro', 'youden', 'prior', 'sensitivity'],
+                    help='how the decision cut-off is chosen. argmax is a fixed 0.5, which is '
+                    +'only right when the training prior matches the evaluation one -- with '
+                    +'--weighted_sample it does not. Any other value fits the cut-off on the '
+                    +'validation split and applies it unchanged to test, improving every '
+                    +'threshold-dependent metric. auc and auprc are unaffected (default: argmax)')
+parser.add_argument('--threshold_sensitivity', type=float, default=0.90,
+                    help='target recall on the minority class for --threshold_metric sensitivity; '
+                    +'fixes the HER2+ miss rate and lets the specificity fall where it may (default: 0.90)')
 parser.add_argument('--patch_drop', type=float, default=0.,
                     help='fraction of a bag randomly dropped at each training step. The only '
                     +'augmentation available with precomputed features; 0 disables it (default: 0)')
@@ -200,7 +220,8 @@ settings = {'num_splits': args.k,
             'scheduler': args.scheduler,
             'warmup_epochs': args.warmup_epochs,
             'drop_out': args.drop_out,
-            'patch_drop': args.patch_drop}
+            'patch_drop': args.patch_drop,
+            'threshold_metric': args.threshold_metric}
 
 if args.early_stopping:
     settings.update({'early_stopping_metric': args.early_stopping_metric,
@@ -249,6 +270,12 @@ else:
 
 # carried into train() so plots can label the classes by name instead of 0/1
 args.label_dict = dataset.label_dict
+
+# The csv label strings are leftovers from the upstream tumor-vs-normal task and stand in
+# for HER2 status; a confusion matrix labelled 'tumor_tissue' would claim something this
+# experiment never tested. Class 0 is HER2+, the 21% minority.
+if args.task == 'task_1_tumor_vs_normal':
+    args.class_display_names = {'tumor_tissue': 'HER2+', 'normal_tissue': 'HER2-'}
 
 if not os.path.isdir(args.results_dir):
     os.mkdir(args.results_dir)

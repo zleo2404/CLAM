@@ -6,6 +6,8 @@ log*.txt
 *.pt
 results*/
 ablation/logs/
+optuna/logs/
+optuna/study.db
 patching_results*/
 splits/
 heatmaps/*

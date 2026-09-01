@@ -10,6 +10,7 @@ from models.model_transmil import TransMIL
 from sklearn.preprocessing import label_binarize
 from sklearn.metrics import roc_auc_score, roc_curve
 from sklearn.metrics import accuracy_score, balanced_accuracy_score, f1_score, confusion_matrix
+from sklearn.metrics import average_precision_score
 from sklearn.metrics import auc as calc_auc
 
 device=torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -32,6 +33,113 @@ def compute_metrics(labels, preds, n_classes):
                                        labels=list(range(n_classes)), zero_division=0)
     metrics['confusion_matrix'] = confusion_matrix(labels, preds,
                                                    labels=list(range(n_classes)))
+    return metrics
+
+def compute_auprc(labels, probs, n_classes):
+    """
+    Area under the precision-recall curve (average precision) for the MINORITY class.
+
+    ROC AUC dilutes the false positive rate in the large negative class, so on a 21/79
+    cohort it reads optimistically: a model can score a respectable AUC while being poor
+    at the thing that matters here, finding the HER2+ slides. Average precision has no
+    such dilution -- its baseline is the positive prevalence itself, 0.21 rather than
+    0.5, leaving far more room between a model that finds the positives and one that
+    does not.
+
+    The positive class is taken to be the rarer one in the labels of the split being
+    scored, not a hardcoded index: this repo's label_dict is inverted, and average
+    precision for the majority class would silently return a near-useless number with a
+    0.79 baseline. Returns (auprc, positive_class_index).
+    """
+    labels = np.asarray(labels).astype(int)
+    probs = np.asarray(probs)
+
+    if n_classes == 2:
+        counts = np.bincount(labels, minlength=2)
+        if counts.min() == 0:                       # a fold that happens to miss a class
+            return float('nan'), int(np.argmin(counts))
+        pos = int(np.argmin(counts))
+        return float(average_precision_score((labels == pos).astype(int), probs[:, pos])), pos
+
+    aps = [average_precision_score((labels == c).astype(int), probs[:, c])
+           for c in range(n_classes) if (labels == c).any()]
+    return (float(np.mean(aps)) if aps else float('nan')), -1
+
+def find_threshold(labels, probs, criterion='f1_macro', target_sensitivity=0.90):
+    """
+    Fit the decision cut-off on the VALIDATION split. Binary tasks only.
+
+    Everything else in this file predicts with argmax, which is a hard 0.5 on the class
+    probability. That is optimal only when the prior the model trained under matches the
+    prior it is scored under, and here it does not: --weighted_sample feeds the model a
+    rebalanced 50/50 stream while validation and test stay at 21/79, so the probabilities
+    are shifted toward the minority class and 0.5 does not sit where it should.
+
+    The cut-off is a parameter like any other: fitted on validation, then applied
+    unchanged to test. Candidates are the observed probabilities themselves, so the
+    search is exact rather than a grid approximation.
+
+    The score is always the MINORITY class probability, matching compute_auprc, so
+    "sensitivity" here means sensitivity to HER2+ regardless of the inverted label_dict.
+
+        f1_macro     maximise macro F1 -- balances both classes, assumes equal costs
+        youden       maximise tpr - fpr, the ROC point furthest from chance
+        prior        predict the minority class as often as it actually occurs; changes
+                     no ranking, only re-centres the decision. The most stable of the
+                     four, because it optimises nothing
+        sensitivity  the cut-off that reaches target_sensitivity on the minority class.
+                     The clinically meaningful one for a triage model: fix the miss rate
+                     you are willing to accept for HER2+, then report the specificity it
+                     costs
+
+    Returns (threshold, positive_class_index).
+    """
+    labels = np.asarray(labels).astype(int)
+    probs = np.asarray(probs)
+    counts = np.bincount(labels, minlength=probs.shape[1])
+    pos = int(np.argmin(counts))                       # minority class = HER2+
+    y = (labels == pos).astype(int)
+    s = probs[:, pos]
+
+    if counts.min() == 0:                              # nothing to fit against
+        return 0.5, pos
+
+    if criterion == 'prior':
+        rate = float(y.mean())
+        return float(np.quantile(s, 1.0 - rate)), pos
+
+    if criterion == 'youden':
+        fpr, tpr, thr = roc_curve(y, s)
+        return float(thr[int(np.argmax(tpr - fpr))]), pos
+
+    if criterion == 'sensitivity':
+        # the largest cut-off that still recovers target_sensitivity of the positives
+        return float(np.quantile(s[y == 1], 1.0 - target_sensitivity)), pos
+
+    if criterion == 'f1_macro':
+        uniq = np.unique(s)
+        candidates = (uniq[:-1] + uniq[1:]) / 2.0 if len(uniq) > 1 else np.array([0.5])
+        best_t, best_score = 0.5, -1.0
+        for t in candidates:
+            preds = np.where(s >= t, pos, 1 - pos)
+            score = f1_score(labels, preds, average='macro', zero_division=0)
+            if score > best_score:
+                best_t, best_score = float(t), score
+        return best_t, pos
+
+    raise ValueError('unknown threshold criterion: {}'.format(criterion))
+
+def metrics_at_threshold(labels, probs, threshold, pos, n_classes):
+    """
+    Recompute the threshold-dependent metrics at a given cut-off, reusing the
+    probabilities summary() already returned rather than re-running the model.
+    """
+    probs = np.asarray(probs)
+    preds = np.where(probs[:, pos] >= threshold, pos, 1 - pos)
+    metrics = compute_metrics(np.asarray(labels).astype(int), preds, n_classes)
+    metrics['auprc'], _ = compute_auprc(labels, probs, n_classes)
+    metrics['labels'], metrics['probs'] = labels, probs
+    metrics['threshold'], metrics['threshold_class'] = float(threshold), int(pos)
     return metrics
 
 def save_loss_curve(train_losses, val_losses, save_path, title='Training / validation loss'):
@@ -103,22 +211,28 @@ def save_confusion_matrix(cm, save_path, class_names=None, title='Confusion matr
     plt.close(fig)
     print('Saved confusion matrix to {}'.format(save_path))
 
-def class_names_from_label_dict(label_dict, n_classes):
+def class_names_from_label_dict(label_dict, n_classes, display_names=None):
     """
     Class names ordered by class index, e.g. {'normal_tissue': 1, 'tumor_tissue': 0}
     becomes ['tumor_tissue', 'normal_tissue']. Falls back to the index itself for any
     class the dict does not name, so a missing label_dict degrades to '0', '1', ...
+
+    display_names remaps those labels to what they actually mean. The strings in the csv
+    are leftovers from the upstream tumor-vs-normal task and stand in for HER2 status, so
+    a confusion matrix labelled 'tumor_tissue' / 'normal_tissue' claims something the
+    experiment never tested. Passing {'tumor_tissue': 'HER2+', 'normal_tissue': 'HER2-'}
+    makes the figure say what the model was actually trained to predict.
     """
     names = [str(i) for i in range(n_classes)]
     for name, idx in (label_dict or {}).items():
         if isinstance(idx, int) and 0 <= idx < n_classes:
-            names[idx] = str(name)
+            names[idx] = str((display_names or {}).get(name, name))
     return names
 
 def log_metrics(metrics, writer, split, epoch, n_classes):
     """Print and (optionally) log to tensorboard the metrics from compute_metrics."""
-    print('{} acc: {:.4f}, balanced acc: {:.4f}, macro F1: {:.4f}'.format(
-        split, metrics['acc'], metrics['bal_acc'], metrics['f1_macro']))
+    print('{} acc: {:.4f}, balanced acc: {:.4f}, macro F1: {:.4f}, AUPRC: {:.4f}'.format(
+        split, metrics['acc'], metrics['bal_acc'], metrics['f1_macro'], metrics.get('auprc', float('nan'))))
     for i in range(n_classes):
         print('class {}: F1 {:.4f}'.format(i, metrics['f1_per_class'][i]))
 
@@ -126,6 +240,8 @@ def log_metrics(metrics, writer, split, epoch, n_classes):
         writer.add_scalar('{}/acc'.format(split), metrics['acc'], epoch)
         writer.add_scalar('{}/bal_acc'.format(split), metrics['bal_acc'], epoch)
         writer.add_scalar('{}/f1_macro'.format(split), metrics['f1_macro'], epoch)
+        if 'auprc' in metrics and np.isfinite(metrics['auprc']):
+            writer.add_scalar('{}/auprc'.format(split), metrics['auprc'], epoch)
         for i in range(n_classes):
             writer.add_scalar('{}/class_{}_f1'.format(split, i), metrics['f1_per_class'][i], epoch)
 
@@ -170,6 +286,11 @@ def early_stopping_value(metric_name, val_loss, auc, metrics):
         return val_loss
     if metric_name == 'auc':
         return auc
+    if metric_name == 'auprc':
+        # nan when a validation fold happens to contain a single class; treat it as no
+        # improvement rather than letting nan poison the comparison in EarlyStopping
+        value = metrics['auprc']
+        return -np.inf if not np.isfinite(value) else value
     if metric_name == 'f1_macro':
         return metrics['f1_macro']
     raise ValueError('unknown early stopping metric: {}'.format(metric_name))
@@ -416,14 +537,34 @@ def train(datasets, cur, args):
         torch.save(model.state_dict(), os.path.join(args.results_dir, "s_{}_checkpoint.pt".format(cur)))
 
     _, val_error, val_auc, _, val_metrics = summary(model, val_loader, args.n_classes)
+    results_dict, test_error, test_auc, acc_logger, test_metrics = summary(model, test_loader, args.n_classes)
+
+    # Fit the decision cut-off on validation, then apply it unchanged to test. Only the
+    # threshold-dependent metrics move (acc, bal_acc, F1, confusion matrix); auc and
+    # auprc are threshold-free and are unaffected.
+    threshold_metric = getattr(args, 'threshold_metric', 'argmax')
+    if args.n_classes == 2 and threshold_metric != 'argmax':
+        threshold, pos = find_threshold(val_metrics['labels'], val_metrics['probs'],
+                                        threshold_metric,
+                                        getattr(args, 'threshold_sensitivity', 0.90))
+        print('\nDecision threshold fitted on validation ({}): {:.4f} on P(class {})'.format(
+            threshold_metric, threshold, pos))
+        val_metrics = metrics_at_threshold(val_metrics['labels'], val_metrics['probs'],
+                                           threshold, pos, args.n_classes)
+        test_metrics = metrics_at_threshold(test_metrics['labels'], test_metrics['probs'],
+                                            threshold, pos, args.n_classes)
+        # error was computed against argmax; keep it consistent with the new cut-off
+        val_error, test_error = 1.0 - val_metrics['acc'], 1.0 - test_metrics['acc']
+    else:
+        val_metrics['threshold'] = test_metrics['threshold'] = 0.5
+
     print('Val error: {:.4f}, ROC AUC: {:.4f}'.format(val_error, val_auc))
     log_metrics(val_metrics, writer, 'final/val', 0, args.n_classes)
-
-    results_dict, test_error, test_auc, acc_logger, test_metrics = summary(model, test_loader, args.n_classes)
     print('Test error: {:.4f}, ROC AUC: {:.4f}'.format(test_error, test_auc))
     log_metrics(test_metrics, writer, 'final/test', 0, args.n_classes)
 
-    class_names = class_names_from_label_dict(getattr(args, 'label_dict', None), args.n_classes)
+    class_names = class_names_from_label_dict(getattr(args, 'label_dict', None), args.n_classes,
+                                              getattr(args, 'class_display_names', None))
 
     save_loss_curve(train_losses, val_losses,
                     os.path.join(args.results_dir, 'loss_curve_{}.png'.format(cur)),
@@ -613,6 +754,7 @@ def validate(cur, epoch, model, loader, n_classes, early_stopping = None, writer
         auc = roc_auc_score(labels, prob, multi_class='ovr')
 
     metrics = compute_metrics(labels, preds, n_classes)
+    metrics['auprc'], auprc_class = compute_auprc(labels, prob, n_classes)
 
     if writer:
         writer.add_scalar('val/loss', val_loss, epoch)
@@ -697,6 +839,7 @@ def validate_clam(cur, epoch, model, loader, n_classes, early_stopping = None, w
         auc = np.nanmean(np.array(aucs))
 
     metrics = compute_metrics(labels, preds, n_classes)
+    metrics['auprc'], auprc_class = compute_auprc(labels, prob, n_classes)
 
     print('\nVal Set, val_loss: {:.4f}, val_error: {:.4f}, auc: {:.4f}'.format(val_loss, val_error, auc))
     log_metrics(metrics, writer, 'val', epoch, n_classes)
@@ -779,5 +922,9 @@ def summary(model, loader, n_classes):
         auc = np.nanmean(np.array(aucs))
 
     metrics = compute_metrics(all_labels, all_preds, n_classes)
+    metrics['auprc'], _ = compute_auprc(all_labels, all_probs, n_classes)
+    # carried out so a cut-off fitted on validation can be applied to these same
+    # predictions without a second forward pass over the split
+    metrics['labels'], metrics['probs'] = all_labels, all_probs
 
     return patient_results, test_error, auc, acc_logger, metrics
